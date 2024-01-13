@@ -1,0 +1,21 @@
+\section{Project Plans and Conclusion}
+
+By the end of the day, the goal of the project is to combine lots of aforementioned concepts to create a simple and efficient library for conveniently solving PDEs through the training of an NN. Since many concepts were relatively new, the Michaelmas term was mainly spent on preliminary work. Over the Christmas holiday, rather more investigations were made on the mixed formulation for the Poisson equation and POD for MOR. Lots of works were done but some were too trivial to be discussed as a single section, but will be listed below. By the start of the lent term, the following progress has been made on the project:
+
+\begin{itemize}
+    \item Preliminary reading on MOR techniques and code implementation of POD with collected snapshots through RBniCSx
+    \item Familiarization with FEniCSx on defining different types of PDEs, different solvers, function spaces, and exploration of the effects of parameters in the mixed formulation.
+    \item Parallel data partitioning and scaling functions with MPI used for parallel training. 
+    \item Familiarization with distributed training with TensorFlow
+    
+    % Elaboration can be added here
+\end{itemize}
+
+The plan for the next few months is to combine what has been studied and produce a more complete Python library for performing NN training on solving different PDEs, and to evaluate the performance. Details of the work to be done include:
+
+\begin{itemize}
+    \item Integrate open-source libraries to provide Tensorflow support in DLRBniCSx
+    \item Implement training-validation procedures on the NN
+    \item Compile additional functions, including checkpointing and error analysis
+\end{itemize}
+
