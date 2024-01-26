@@ -6,6 +6,7 @@ from dolfinx import fem, mesh, io
 from dolfinx.fem.petsc import LinearProblem
 from ufl import Measure, SpatialCoordinate, TestFunctions, TrialFunctions, div, exp, inner
 import rbnicsx
+import rbnicsx.backends
 import itertools
 
 class MixedPoissonSolver:
@@ -115,18 +116,19 @@ w_h = solver.solve(mu_values)
 
 sigma_h, u_h = w_h.split()
 
-# TOASK: the msh.comm?
-with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/trial1.xdmf", "w") as file:
+with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/trial.xdmf", "w") as file:
     file.write_mesh(solver.msh)
     file.write_function(u_h)
 
-
-"""
-### WRONG FUNCTION SPACE
+Sigma_plot_element = element("Lagrange", solver.msh.basix_cell(), solver.k, shape=(solver.msh.geometry.dim,))
+Sigma_plot = fem.FunctionSpace(solver.msh, Sigma_plot_element)
+sigma_h_plot = fem.Function(Sigma_plot)
+sigma_h_expr = fem.Expression(sigma_h, Sigma_plot.element.interpolation_points())
+sigma_h_plot.interpolate(sigma_h_expr)
+ 
 with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/sigma_trial.xdmf", "w") as file:
     file.write_mesh(solver.msh)
-    file.write_function(sigma_h)
-"""
+    file.write_function(sigma_h_plot)
 
 def generate_training_set(sample_size):
     # Generate input parameter matrix for MU, depending on sample_size
@@ -164,6 +166,8 @@ def create_training_set(solver, sample_size):
     
     return snapshot_sigma, snapshot_u
 
+
 sample_size = [3,3,3,3,3]
 a, b = create_training_set(solver, sample_size)
 print(a.shape, b.shape)
+
