@@ -7,6 +7,7 @@ from dolfinx.fem.petsc import LinearProblem
 from ufl import Measure, SpatialCoordinate, TestFunctions, TrialFunctions, div, exp, inner
 import rbnicsx
 import rbnicsx.backends
+import rbnicsx.io
 import itertools
 
 class MixedPoissonSolver:
@@ -111,6 +112,8 @@ x = solver.generate_training_set(sample_size)
 print(x)
 """
 
+"""
+### Test Solver
 mu_values = [5.0, 10.0, 1.0/0.02, 0.5, 0.5] 
 w_h = solver.solve(mu_values)
 
@@ -119,6 +122,8 @@ sigma_h, u_h = w_h.split()
 with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/trial.xdmf", "w") as file:
     file.write_mesh(solver.msh)
     file.write_function(u_h)
+
+
 
 Sigma_plot_element = element("Lagrange", solver.msh.basix_cell(), solver.k, shape=(solver.msh.geometry.dim,))
 Sigma_plot = fem.FunctionSpace(solver.msh, Sigma_plot_element)
@@ -129,8 +134,9 @@ sigma_h_plot.interpolate(sigma_h_expr)
 with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/sigma_trial.xdmf", "w") as file:
     file.write_mesh(solver.msh)
     file.write_function(sigma_h_plot)
+"""
 
-def generate_training_set(sample_size):
+def generate_training_set(sample_size = [3, 3, 3, 3, 3]):
     # Generate input parameter matrix for MU, depending on sample_size
     set_1 = np.linspace(5, 20, sample_size[0])
     set_2 = np.linspace(10, 20, sample_size[1])
@@ -143,9 +149,9 @@ def generate_training_set(sample_size):
     
 def create_training_set(solver, sample_size):
     # Generate the training set matrix before performing POD
-    # training_set = rbnicsx.io.on_rank_zero(mesh.comm, generate_training_set)
-    training_set = generate_training_set(sample_size)
-    # print(rbnicsx.io.TextBox("POD offline phase begins", fill="="))
+    training_set = rbnicsx.io.on_rank_zero(solver.msh.comm, generate_training_set)
+    # training_set = generate_training_set(sample_size)
+    print(rbnicsx.io.TextBox("POD offline phase begins", fill="="))
     print("")
     print("Set up snapshots matrix")
     V, _ = solver.V.sub(0).collapse()
@@ -154,20 +160,35 @@ def create_training_set(solver, sample_size):
     snapshots_matrix_u = rbnicsx.backends.FunctionsList(Q)
 
     for (mu_index, mu) in enumerate(training_set):
-        # print(rbnicsx.io.TextLine(str(mu_index+1), fill="#"))
-
+        print(rbnicsx.io.TextLine(str(mu_index+1), fill="#"))
         print("Parameter number ", (mu_index+1), "of", training_set.shape[0])
         print("High fidelity solve for mu =", mu)
         w_h = solver.solve(mu)
         snapshot_sigma, snapshot_u = w_h.split()
+        snapshot_sigma = snapshot_sigma.collapse()
+        snapshot_u = snapshot_u.collapse()
         print("Update snapshots matrix")
         snapshots_matrix_sigma.append(snapshot_sigma)
         snapshots_matrix_u.append(snapshot_u)
     
-    return snapshot_sigma, snapshot_u
+    return snapshots_matrix_sigma, snapshots_matrix_u
 
+SAMPLE_SIZE = [3, 3, 3, 3, 3]
+### TOASK: is there a way such that the SAMPLE_SIZE parameter is adopted in line 152?
+snapshots_matrix_sigma, snapshots_matrix_u = create_training_set(solver, sample_size=SAMPLE_SIZE)
+Nmax = 30
 
-sample_size = [3,3,3,3,3]
-a, b = create_training_set(solver, sample_size)
-print(a.shape, b.shape)
+print(rbnicsx.io.TextLine("Perform POD", fill="#"))
+eigenvalues_u, modes_u, _ = rbnicsx.backends.\
+    proper_orthogonal_decomposition(snapshots_matrix_u,
+                                    solver._inner_product_action,
+                                    N=Nmax, tol=1e-4)
 
+eigenvalues_sigma, modes_sigma, _ = rbnicsx.backends.\
+    proper_orthogonal_decomposition(snapshots_matrix_sigma,
+                                    solver._inner_product_action,
+                                    N=Nmax, tol=1e-4)
+
+print(len(eigenvalues_sigma), len(eigenvalues_u))
+print("First 30 eigenvalues for sigma:", eigenvalues_sigma[:30])
+print("First 30 eigenvalues for u:", eigenvalues_u[:30])
