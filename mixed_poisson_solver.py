@@ -4,10 +4,12 @@ import numpy as np
 from basix.ufl import element, mixed_element
 from dolfinx import fem, mesh, io
 from dolfinx.fem.petsc import LinearProblem
-from ufl import Measure, SpatialCoordinate, TestFunctions, TrialFunctions, div, exp, inner
+from ufl import Measure, SpatialCoordinate, TestFunctions, TrialFunctions, div, exp, inner, grad, dx
+import ufl
 import rbnicsx
 import rbnicsx.backends
 import rbnicsx.io
+import rbnicsx.online
 import itertools
 
 class MixedPoissonSolver:
@@ -104,13 +106,76 @@ class MixedPoissonSolver:
             else:
                 raise e
 
-solver = MixedPoissonSolver()
-"""
-### TEST generate_training_set
-sample_size = [3,3,3,3,3]
-x = solver.generate_training_set(sample_size)
-print(x)
-"""
+class PODReducedProblem:
+    def __init__(self, problem):
+        V, _ = problem.V.sub(0).collapse()
+        Q, _ = problem.V.sub(1).collapse()
+        self._basis_functions_sigma = rbnicsx.backends.FunctionsList(V)
+        self._basis_functions_u = rbnicsx.backends.FunctionsList(Q)
+        ### TOASK: TrialFunction VS TrialFunctions?
+        sigma, u = ufl.TrialFunction(V), ufl.TrialFunction(Q)
+        v, q = ufl.TestFunction(V), ufl.TestFunction(Q)
+        self._inner_product_sigma = inner(sigma, v) * dx + \
+            inner(grad(sigma), grad(v)) * dx
+        self._inner_product_action_sigma = \
+            rbnicsx.backends.bilinear_form_action(self._inner_product_sigma,
+                                                  part="real")
+        self._inner_product_u = inner(u, q) * dx
+        self._inner_product_action_u = \
+            rbnicsx.backends.bilinear_form_action(self._inner_product_u,
+                                                  part="real")
+
+        """
+        dx = Measure("dx", problem.msh)
+        self._inner_product_u = inner(sigma, tau) * dx + \
+            inner(u, div(tau)) * dx + inner(div(sigma), v) * dx
+        self._inner_product_action_u = \
+            rbnicsx.backends.bilinear_form_action(self._inner_product_u,
+                                                  part="real")
+        self._inner_product_sigma =  -inner(problem.f, v) * dx
+        """
+    def project_snapshot_sigma(self, solution, N):
+        return self._project_snapshot_sigma(solution, N)
+
+    def project_snapshot_u(self, solution, N):
+        return self._project_snapshot_u(solution, N)
+
+    def _project_snapshot_sigma(self, solution, N):
+        ### This line can be replaced by an offline function?
+        projected_snapshot_sigma = rbnicsx.online.create_vector(N)
+        # projected_snapshot_sigma = np.random.rand(N)
+        A = rbnicsx.backends.\
+            project_matrix(self._inner_product_action_sigma,
+                           self._basis_functions_sigma[:N])
+        F = rbnicsx.backends.\
+            project_vector(self._inner_product_action_sigma(solution),
+                           self._basis_functions_sigma[:N])
+        ksp = PETSc.KSP()
+        ksp.create(projected_snapshot_sigma.comm)
+        ksp.setOperators(A)
+        ksp.setType("preonly")
+        ksp.getPC().setType("lu")
+        ksp.setFromOptions()
+        ksp.solve(F, projected_snapshot_sigma)
+        return projected_snapshot_sigma
+
+    def _project_snapshot_u(self, solution, N):
+        projected_snapshot_u = rbnicsx.online.create_vector(N)
+        # projected_snapshot_u = np.random.rand(N)
+        A = rbnicsx.backends.\
+            project_matrix(self._inner_product_action_u,
+                           self._basis_functions_u[:N])
+        F = rbnicsx.backends.\
+            project_vector(self._inner_product_action_u(solution),
+                           self._basis_functions_u[:N])
+        ksp = PETSc.KSP()
+        ksp.create(projected_snapshot_u.comm)
+        ksp.setOperators(A)
+        ksp.setType("preonly")
+        ksp.getPC().setType("lu")
+        ksp.setFromOptions()
+        ksp.solve(F, projected_snapshot_u)
+        return projected_snapshot_u
 
 """
 ### Test Solver
@@ -147,15 +212,12 @@ def generate_training_set(sample_size = [3, 3, 3, 3, 3]):
                                                         set_4, set_5)))
     return training_set
     
-def create_training_set(solver, sample_size):
-    # Generate the training set matrix before performing POD
-    training_set = rbnicsx.io.on_rank_zero(solver.msh.comm, generate_training_set)
-    # training_set = generate_training_set(sample_size)
+def create_training_snapshots(training_set, problem_parametric):
     print(rbnicsx.io.TextBox("POD offline phase begins", fill="="))
     print("")
     print("Set up snapshots matrix")
-    V, _ = solver.V.sub(0).collapse()
-    Q, _ = solver.V.sub(1).collapse()
+    V, _ = problem_parametric.V.sub(0).collapse()
+    Q, _ = problem_parametric.V.sub(1).collapse()
     snapshots_matrix_sigma = rbnicsx.backends.FunctionsList(V)
     snapshots_matrix_u = rbnicsx.backends.FunctionsList(Q)
 
@@ -163,7 +225,7 @@ def create_training_set(solver, sample_size):
         print(rbnicsx.io.TextLine(str(mu_index+1), fill="#"))
         print("Parameter number ", (mu_index+1), "of", training_set.shape[0])
         print("High fidelity solve for mu =", mu)
-        w_h = solver.solve(mu)
+        w_h = problem_parametric.solve(mu)
         snapshot_sigma, snapshot_u = w_h.split()
         snapshot_sigma = snapshot_sigma.collapse()
         snapshot_u = snapshot_u.collapse()
@@ -173,22 +235,42 @@ def create_training_set(solver, sample_size):
     
     return snapshots_matrix_sigma, snapshots_matrix_u
 
-SAMPLE_SIZE = [3, 3, 3, 3, 3]
-### TOASK: is there a way such that the SAMPLE_SIZE parameter is adopted in line 152?
-snapshots_matrix_sigma, snapshots_matrix_u = create_training_set(solver, sample_size=SAMPLE_SIZE)
-Nmax = 30
+problem_parametric = MixedPoissonSolver()
+reduced_problem = PODReducedProblem(problem_parametric)
+SAMPLE_SIZE = [3, 3, 3, 2, 2]
+training_set = generate_training_set(SAMPLE_SIZE)
+snapshots_matrix_sigma, snapshots_matrix_u = create_training_snapshots(training_set, problem_parametric)
+Nmax = 20
 
 print(rbnicsx.io.TextLine("Perform POD", fill="#"))
 eigenvalues_u, modes_u, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_u,
-                                    solver._inner_product_action,
+                                    problem_parametric._inner_product_action,
                                     N=Nmax, tol=1e-4)
 
 eigenvalues_sigma, modes_sigma, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_sigma,
-                                    solver._inner_product_action,
+                                    problem_parametric._inner_product_action,
                                     N=Nmax, tol=1e-4)
 
-print(len(eigenvalues_sigma), len(eigenvalues_u))
+reduced_problem._basis_functions_u.extend(modes_u)
+reduced_problem._basis_functions_sigma.extend(modes_sigma)
+
 print("First 30 eigenvalues for sigma:", eigenvalues_sigma[:30])
 print("First 30 eigenvalues for u:", eigenvalues_u[:30])
+print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")
+
+output_set_sigma = np.empty([training_set.shape[0], len(reduced_problem._basis_functions_sigma)])
+output_set_u = np.empty([training_set.shape[0], len(reduced_problem._basis_functions_u)])
+print(f"Size of output set u and sigma are: {output_set_u.shape}, {output_set_sigma.shape}")
+rb_size_sigma = len(reduced_problem._basis_functions_sigma)
+rb_size_u = len(reduced_problem._basis_functions_u)
+print(f"Size of reduced basis u and sigma are: {rb_size_u}, {rb_size_sigma}")
+for i in range(training_set.shape[0]):
+    if i % 20 == 0:
+        print(f"Parameter number {i+1} of {training_set.shape[0]}: {training_set[i,:]}")
+    solution_sigma, solution_u = snapshots_matrix_sigma[i], snapshots_matrix_u[i]
+    output_set_sigma[i, :] = reduced_problem.project_snapshot_sigma(solution_sigma, rb_size_sigma).array  
+    output_set_u[i, :] = reduced_problem.project_snapshot_u(solution_u, rb_size_u).array
+
+print(output_set_u)
