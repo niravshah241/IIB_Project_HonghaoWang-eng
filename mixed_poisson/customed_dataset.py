@@ -48,6 +48,7 @@ class CustomDataset(tf.keras.utils.Sequence):
         label = self.output_set[idx]
         return self.transform(input_data), self.target_transform(label)
 
+    ### TOASK: what if the parameter only takes a single value and shares the same max and min? 
     def input_transform(self, input_data):
         #print("#"*80)
         #print(self.input_range)
@@ -101,7 +102,8 @@ def create_Dataloader(input_dataset, output_dataset, batch_size = 32,
 
     # Convert into numpy before slicing, tensors cannot be directly sliced
     ### TOASK: maybe there is a faster way for implementation?
-    input_dataset_numpy = input_dataset.numpy()
+    ## TODO .numpy().copy(), otherwise passing by reference
+    input_dataset_numpy = input_dataset.numpy() 
     output_dataset_numpy = output_dataset.numpy()
 
     # Split the datasets into training and testing datasets
