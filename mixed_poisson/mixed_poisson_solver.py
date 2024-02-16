@@ -2,6 +2,7 @@ from mpi4py import MPI
 from petsc4py import PETSc
 import numpy as np
 from basix.ufl import element, mixed_element
+import dolfinx
 from dolfinx import fem, mesh, io
 from dolfinx.fem.petsc import LinearProblem
 from ufl import Measure, SpatialCoordinate, TestFunctions, TrialFunctions, div, exp, inner, grad, dx
@@ -11,7 +12,13 @@ import rbnicsx.backends
 import rbnicsx.io
 import rbnicsx.online
 import itertools
-# from customed_dataset import CustomDataset, create_Dataloader
+from smt.sampling_methods import LHS
+from customed_dataset import CustomDataset, create_Dataloader
+from ANN_model import MixedPoissonANNModel
+from engine import train
+import tensorflow as tf
+
+print(dolfinx.__version__)
 
 class MixedPoissonSolver:
     def __init__(self):
@@ -124,12 +131,12 @@ class PODReducedProblem:
             rbnicsx.backends.bilinear_form_action(self._inner_product_u,
                                                   part="real")
 
-        self.output_scaling_range_sigma = [-1., 1.]
+        self.output_scaling_range_sigma = [0., 1.]
         self.output_range_sigma = [None, None]
-        self.output_scaling_range_u = [-1., 1.]
+        self.output_scaling_range_u = [0., 1.]
         self.output_range_u = [None, None]
 
-        self.input_scaling_range = [-1., 1.]
+        self.input_scaling_range = [0., 1.]
         self.input_range = \
             np.array([[5, 10, 50, 0.5, 0.5],
                       [5, 10, 50, 0.5, 0.5]])
@@ -141,7 +148,7 @@ class PODReducedProblem:
     
     def reconstruct_solution_u(self, reduced_solution):
         print(reduced_solution)
-        print(self._basis_functions_u.size)
+        # print(self._basis_functions_u.size)
         print(self._basis_functions_u[:reduced_solution.size])
         return self._basis_functions_u[:reduced_solution.size] * \
             reduced_solution
@@ -279,16 +286,13 @@ print("First 30 eigenvalues for sigma:", eigenvalues_sigma[:30])
 print("First 30 eigenvalues for u:", eigenvalues_u[:30])
 print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")
 
-def generate_ann_input_set(sample_size = [3, 1, 3, 2, 2]):
-    # Generate input parameter matrix for MU, depending on sample_size
-    set_1 = np.linspace(5, 20, sample_size[0])
-    set_2 = np.linspace(10, 20, sample_size[1])
-    set_3 = np.linspace(10, 50, sample_size[2])
-    set_4 = np.linspace(0.3, 0.7, sample_size[3])
-    set_5 = np.linspace(0.3, 0.7, sample_size[4])
-    training_set = np.array(list(itertools.product(set_1,set_2, set_3,
-                                                        set_4, set_5)))
-    return training_set
+def generate_ann_input_set(num_samples = 32):
+    limits = np.array([[5, 20], [5, 20],
+                       [10, 50], [0.2, 0.8], 
+                       [0.2, 0.8]])
+    sampling = LHS(xlimits=limits)
+    x = sampling(num_samples)
+    return x
 
 ann_input_set = generate_ann_input_set()
 
@@ -310,9 +314,13 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
         solution_u = solution_u.collapse()
         output_set_sigma[i, :] = reduced_problem.project_snapshot_sigma(solution_sigma, rb_size_sigma).array  
         output_set_u[i, :] = reduced_problem.project_snapshot_u(solution_u, rb_size_u).array
-        regenerated_solution_u = reduced_problem.reconstruct_solution_u(output_set_u[i, :])
-        regenerated_solution_sigma = reduced_problem.reconstruct_solution_u(output_set_sigma[i, :])
-        print(f"Absolute error U for parameter {i+1}: {np.abs(regenerated_solution_u - solution_u)}")
+        if i % 10 == 0:
+            regenerated_solution_u = reduced_problem.reconstruct_solution_u(output_set_u[i, :]) # A numpy array
+            print(regenerated_solution_u.shape, type(solution_u))
+            # print(f"Absolute error U for parameter {i+1}: {np.abs(np.sum((regenerated_solution_u - solution_u.x.array)))}")
+
+        # regenerated_solution_sigma = reduced_problem.reconstruct_solution_u(output_set_sigma[i, :])
+        ### SUM object from the dolfinx class
         # print(f"Absolute error SIGMA for parameter {i+1}: {np.abs(regenerated_solution_sigma - solution_sigma)}")
 
     return output_set_u, output_set_sigma
@@ -329,11 +337,8 @@ reduced_problem.output_range_sigma[1] = np.max(ann_output_set_sigma)
 reduced_problem.update_input_range(ann_input_set)
 
 print(ann_output_set_u.shape)
-print(ann_output_set_u)
-print(len(reduced_problem.output_range_u))
 print(reduced_problem.output_range_u)
 
-exit()
 customDataset_u = CustomDataset(reduced_problem, ann_input_set, ann_output_set_u,
                             input_scaling_range = reduced_problem.input_scaling_range,
                             output_scaling_range = reduced_problem.output_scaling_range_u,
@@ -353,17 +358,35 @@ scaled_inputs = customDataset_u.input_transform(customDataset_u.input_set)
 scaled_outputs_u = customDataset_u.output_transform(customDataset_u.output_set)
 scaled_outputs_sigma = customDataset_sigma.output_transform(customDataset_sigma.output_set)
 
-BATCH_SIZE = 10
+BATCH_SIZE = 16
+
 train_dataloader_u, test_dataloader_u = create_Dataloader(scaled_inputs, scaled_outputs_u, 
                                                           batch_size=BATCH_SIZE)
 train_dataloader_sigma, test_dataloader_sigma = create_Dataloader(scaled_inputs, scaled_outputs_sigma, 
                                                                   batch_size=BATCH_SIZE)
 
 for X, y in train_dataloader_u:
-    print(f"Shape of training set: {X.shape}")
+    print(f"Shape of training set input: {X.shape}")
     print(f"X dtype: {X.dtype}")
-    print(f"Shape of training set: {y.shape}")
+    print(f"Shape of training set output: {y.shape}")
     print(f"y dtype: {y.dtype}")
+
+
+model_u = MixedPoissonANNModel(input_size = 5, 
+                               output_size = len(reduced_problem._basis_functions_u), 
+                               num_neurons = 25)
+model_u.build((BATCH_SIZE, 5))
+loss_object = tf.keras.losses.MeanAbsoluteError()
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.05)
+
+NUM_EPOCH = 10
+train(model_u,
+      train_dataloader=train_dataloader_u,
+      test_dataloader=test_dataloader_u,
+      optimizer=optimizer,
+      loss_fn=loss_object,
+      epochs=NUM_EPOCH,
+      device="cpu")
 
 #print(output_set_u)
 #print(output_set_sigma)
