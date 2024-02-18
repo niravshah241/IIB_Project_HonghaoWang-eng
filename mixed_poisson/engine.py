@@ -1,7 +1,7 @@
 from typing import Dict, List, Tuple
 from tqdm.auto import tqdm
 import tensorflow as tf
-
+from customed_dataset import create_Dataloader
 print("successful")
 def train_step(model: tf.keras.Model,
                dataloader: tf.data.Dataset,
@@ -140,3 +140,113 @@ def train(model: tf.keras.Model,
         result_dict["test_loss"].append(test_loss)
 
     return result_dict
+
+
+def online_nn(reduced_problem, problem, online_mu, model, rb_size,
+              input_scaling_range=None, output_scaling_range=None,
+              input_range=None, output_range=None, verbose=False):
+    '''
+    Online phase
+    Inputs:
+        online_mu: np.ndarray [1,num_para]
+            representing online parameter
+        reduced_problem: reduced problem with attributes:
+            input_scaling_range: (2,num_para) np.ndarray, row 0 are the
+                SCALED INPUT min_values and row 1 are the
+                SCALED INPUT max_values
+            output_scaling_range: (2,num_para) np.ndarray, row 0 are the
+                SCALED OUTPUT min_values and row 1 are the
+                SCALED OUTPUT max_values
+            input_range: (2,num_para) np.ndarray, row 0 are the
+                ACTUAL INPUT min_values and row 1 are the
+                ACTUAL INPUT max_values
+            output_range: (2,num_para) np.ndarray, row 0 are the
+                ACTUAL OUTPUT min_values and row 1 are the
+                ACTUAL OUTPUT max_values
+    Output:
+        solution_reduced: rbnicsx.online.create_vector, online solution
+    '''
+    if input_scaling_range is None:
+        assert hasattr(reduced_problem, "input_scaling_range")
+        input_scaling_range = reduced_problem.input_scaling_range
+    if output_scaling_range is None:
+        assert hasattr(reduced_problem, "output_scaling_range")
+        output_scaling_range = reduced_problem.output_scaling_range
+    if input_range is None:
+        assert hasattr(reduced_problem, "input_range")
+        input_range = reduced_problem.input_range
+    if output_range is None:
+        assert hasattr(reduced_problem, "output_range")
+        output_range = reduced_problem.output_range
+
+    online_mu_scaled = \
+        (online_mu - input_range[0]) * \
+        (input_scaling_range[1] - input_scaling_range[0]) / (input_range[1] -
+                                           input_range[0]) + \
+        input_scaling_range[0]
+    
+    online_mu_scaled_tensor = tf.convert_to_tensor(online_mu_scaled, dtype=tf.float32)
+    with tf.device('/CPU:0'):  # Use appropriate device
+        pred_scaled = model(online_mu_scaled_tensor[tf.newaxis, ...])
+        pred_scaled_numpy = pred_scaled.numpy()
+        pred = (pred_scaled_numpy - output_scaling_range[0]) * \
+            (output_range[1] - output_range[0]) / (output_scaling_range[1] -
+                                                   output_scaling_range[0]) \
+            + output_range[0]
+
+    solution_reduced = pred
+    return solution_reduced
+
+
+def error_analysis(reduced_problem, problem, error_analysis_mu, model,
+                   rb_size, online_nn, norm_error=None,
+                   reconstruct_solution=None, input_scaling_range=None,
+                   output_scaling_range=None, input_range=None,
+                   output_range=None, index=None, verbose=False):
+    '''
+    Inputs:
+        error_analysis_mu: np.ndarray of size [1,num_para] representing
+            parameter set at which error analysis needs to be evaluated
+        problem: full order model with method:
+            norm_error(fem_solution,ann_reconstructed_solution)
+            and methods required for online_nn
+            (Used ONLY if norm_error is not specified)
+            solve: method to compute full order model solution
+        reduced_problem: reduced problem with attributes:
+            reconstruct_solution: Reconstruct FEM solution from reduced
+                basis solution
+            input_scaling_range: (2,num_para) np.ndarray, row 0 are the
+                SCALED INPUT min_values and row 1 are the SCALED INPUT
+                max_values
+            output_scaling_range: (2,num_para) np.ndarray, row 0 are the
+                SCALED OUTPUT min_values and row 1 are the SCALED OUTPUT
+                max_values
+            input_range: (2,num_para) np.ndarray, row 0 are the
+                ACTUAL INPUT min_values and row 1 are the ACTUAL INPUT
+                max_values
+            output_range: (2,num_para) np.ndarray, row 0 are the
+                ACTUAL OUTPUT min_values and row 1 are the ACTUAL OUTPUT
+                max_values
+    Outputs:
+        error: float, Error computed with norm_error between FEM
+            and RB solution
+    '''
+    ann_prediction = online_nn(reduced_problem, problem, error_analysis_mu,
+                               model, rb_size, input_scaling_range,
+                               output_scaling_range, input_range,
+                               output_range)
+    if reconstruct_solution is None:
+        ann_reconstructed_solution = \
+            reduced_problem.reconstruct_solution(ann_prediction)
+    else:
+        ann_reconstructed_solution = reconstruct_solution(ann_prediction)
+    fem_solution = problem.solve(error_analysis_mu)
+    if type(fem_solution) == tuple:
+        assert index is not None
+        fem_solution = fem_solution[index]
+    if norm_error is None:
+        error = reduced_problem.norm_error(fem_solution,
+                                           ann_reconstructed_solution)
+    else:
+        error = norm_error(fem_solution, ann_reconstructed_solution)
+    return error
