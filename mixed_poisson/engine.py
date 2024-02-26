@@ -1,8 +1,8 @@
 from typing import Dict, List, Tuple
 from tqdm.auto import tqdm
 import tensorflow as tf
-from customed_dataset import create_Dataloader
-print("successful")
+import rbnicsx
+
 def train_step(model: tf.keras.Model,
                dataloader: tf.data.Dataset,
                loss_fn: tf.keras.losses.Loss,
@@ -48,6 +48,7 @@ def train_step(model: tf.keras.Model,
     #return train_loss, train_acc
     return train_loss
 
+### TODO: Name it validate step
 def test_step(model: tf.keras.Model,
               dataloader: tf.data.Dataset,
               loss_fn: tf.keras.losses.Loss,
@@ -186,20 +187,18 @@ def online_nn(reduced_problem, problem, online_mu, model, rb_size,
         input_scaling_range[0]
     
     online_mu_scaled_tensor = tf.convert_to_tensor(online_mu_scaled, dtype=tf.float32)
-    with tf.device('/CPU:0'):  # Use appropriate device
-        pred_scaled = model(online_mu_scaled_tensor[tf.newaxis, ...])
-        pred_scaled_numpy = pred_scaled.numpy()
-        pred = (pred_scaled_numpy - output_scaling_range[0]) * \
-            (output_range[1] - output_range[0]) / (output_scaling_range[1] -
-                                                   output_scaling_range[0]) \
-            + output_range[0]
+    pred_scaled = model(online_mu_scaled_tensor)
+    pred_scaled_numpy = pred_scaled.numpy()
+    pred = (pred_scaled_numpy - output_scaling_range[0]) * (output_range[1] - output_range[0]) /   \
+            (output_scaling_range[1] - output_scaling_range[0]) + output_range[0]
 
-    solution_reduced = pred
+    solution_reduced = rbnicsx.online.create_vector(rb_size)
+    solution_reduced.array = pred
     return solution_reduced
 
-
+### TOASK: Why the fem solutiuon do not need collapse
 def error_analysis(reduced_problem, problem, error_analysis_mu, model,
-                   rb_size, online_nn, norm_error=None,
+                   rb_size, online_nn, fem_solution, norm_error=None,
                    reconstruct_solution=None, input_scaling_range=None,
                    output_scaling_range=None, input_range=None,
                    output_range=None, index=None, verbose=False):
@@ -231,7 +230,7 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
         error: float, Error computed with norm_error between FEM
             and RB solution
     '''
-    ann_prediction = online_nn(reduced_problem, problem, error_analysis_mu,
+    ann_prediction = online_nn(reduced_problem, problem, [error_analysis_mu],
                                model, rb_size, input_scaling_range,
                                output_scaling_range, input_range,
                                output_range)
@@ -240,10 +239,13 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
             reduced_problem.reconstruct_solution(ann_prediction)
     else:
         ann_reconstructed_solution = reconstruct_solution(ann_prediction)
+    """
     fem_solution = problem.solve(error_analysis_mu)
     if type(fem_solution) == tuple:
         assert index is not None
         fem_solution = fem_solution[index]
+    
+    """
     if norm_error is None:
         error = reduced_problem.norm_error(fem_solution,
                                            ann_reconstructed_solution)
