@@ -24,6 +24,7 @@ print(dolfinx.__version__)
 class MixedPoissonSolver:
     def __init__(self):
         self.comm = MPI.COMM_WORLD
+        ### TODO: Change mesh
         self.msh = mesh.create_unit_square(self.comm, 32, 32, mesh.CellType.quadrilateral)
         self.MU = [fem.Constant(self.msh, PETSc.ScalarType(5.)),
                     fem.Constant(self.msh, PETSc.ScalarType(10.)),
@@ -351,6 +352,8 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
         output_set_sigma[i, :] = rb_solution_sigma.array  
         output_set_u[i, :] = rb_solution_u.array
         original_solutions[tuple(mu)] = [solution_u, solution_sigma]
+        # u_error = reduced_problem.norm_error_u(solution_u, rb_solution_u)
+        # sigma_error = reduced_problem.norm_error_sigma(solution_sigma, rb_solution_sigma)
         u_error = calculate_error_u(problem_parametric, reduced_problem, solution_u, rb_solution_u)
         sigma_error = calculate_error_sigma(problem_parametric, reduced_problem, solution_sigma, rb_solution_sigma)
         errors_u[i] = u_error
@@ -360,25 +363,28 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
 
 def calculate_error_u(problem, reduced_problem, original_solution, rb_solution):
     regenerated_solution = reduced_problem.reconstruct_solution_u(rb_solution)
-    error = fem.Function(problem.V)
+    error = fem.Function(problem.V.sub(1).collapse()[0])
     error = regenerated_solution - original_solution
-    norm_error = reduced_problem.compute_norm_u(error)
+    norm_error =  reduced_problem.compute_norm_u(error) / reduced_problem.compute_norm_u(original_solution)
     return norm_error
 
 def calculate_error_sigma(problem, reduced_problem, original_solution, rb_solution):
     regenerated_solution = reduced_problem.reconstruct_solution_sigma(rb_solution)
-    error = fem.Function(problem.V)
+    error = fem.Function(problem.V.sub(0).collapse()[0])
     error = regenerated_solution - original_solution
-    norm_error = reduced_problem.compute_norm_sigma(error)
+    norm_error = reduced_problem.compute_norm_sigma(error)/reduced_problem.compute_norm_sigma(original_solution)
     return norm_error
 
-ann_input_set = generate_ann_input_set(500)
+### TODO: Visualise new reconstructed POD solution vs FEM solution using new samples
+### TODO: Increase number of samples for NN
+
+ann_input_set = generate_ann_input_set(50)
 # ann_input_set = generate_training_set([2,2,2,2,2])
 ann_output_set_u, ann_output_set_sigma, POD_errors_u, POD_errors_sigma, highfid_solutions = \
                             generate_ann_output_set(problem_parametric, reduced_problem, ann_input_set)
 print(f"The mean error for U from POD on the inputs is {np.mean(POD_errors_u): 4f}, and the maximum error is {np.max(POD_errors_u): 4f}")
 print(f"The mean error for SIGMA from POD on the inputs is {np.mean(POD_errors_sigma): 4f}, and the maximum error is {np.max(POD_errors_sigma): 4f}")
-
+exit()
 # Update the input and output ranges by looking for the max and min values
 # Outputs range can be updated by directly look for the single max and min
 # Inputs range is updated using specific methods
@@ -386,6 +392,8 @@ reduced_problem.output_range_u[0] = np.min(ann_output_set_u)
 reduced_problem.output_range_u[1] = np.max(ann_output_set_u)
 reduced_problem.output_range_sigma[0] = np.min(ann_output_set_sigma)
 reduced_problem.output_range_sigma[1] = np.max(ann_output_set_sigma)
+
+### TODO: Keep the same input range for POD and for ANN training, use POD range
 reduced_problem.update_input_range(ann_input_set)
 
 print(ann_output_set_u.shape)
@@ -410,7 +418,7 @@ scaled_outputs_u = customDataset_u.output_transform(customDataset_u.output_set)
 scaled_inputs_sigma = customDataset_sigma.input_transform(customDataset_sigma.input_set)
 scaled_outputs_sigma = customDataset_sigma.output_transform(customDataset_sigma.output_set)
 
-BATCH_SIZE = 4
+BATCH_SIZE = 16
 
 train_dataloader_u, test_dataloader_u = create_Dataloader(scaled_inputs_u, scaled_outputs_u, 
                                                           train_batch_size=BATCH_SIZE, test_batch_size=1)
@@ -435,7 +443,7 @@ for X, y in train_dataloader_u:
 
 ### TRAINING FOR MODEL U
 model_u = create_model(input_shape = 5, output_shape = len(reduced_problem._basis_functions_u), 
-                           hidden_layers_neurons = [25,25,25], activation='relu')
+                           hidden_layers_neurons = [25,25,25], activation='sigmoid')
 loss_object = tf.keras.losses.MeanAbsoluteError()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
@@ -448,12 +456,13 @@ result_dict = train(model_u,
                     epochs=NUM_EPOCH,
                     device="cpu")
 
+### TODO: Increase max epoch, use early stopping, refine learning rate
 
 ### TRAINING FOR MODEL SIGMA
 model_sigma = create_model(input_shape = 5, output_shape = len(reduced_problem._basis_functions_sigma), 
-                           hidden_layers_neurons = [25,25,25], activation='relu')
+                           hidden_layers_neurons = [25,25,25], activation='sigmoid')
 loss_object = tf.keras.losses.MeanAbsoluteError()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
 NUM_EPOCH = 20
 result_dict = train(model_sigma,
@@ -535,5 +544,6 @@ for i in range(error_analysis_set.shape[0]):
     print(f"Error for U: {error_numpy_u[i]}")
     print(f"Error for SIGMA: {error_numpy_sigma[i]}")
 
+print("Final results for a sigmoid activation functio with 500 training and validation samples:")
 print(f"Mean error for U is: {np.mean(error_numpy_u):4f}; Mean Error for SIGMA is {np.mean(error_numpy_sigma):4f}")
 print(f"Maximum error for U and SIGMA are: {np.max(error_numpy_u):4f}, {np.max(error_numpy_sigma):4f}")
