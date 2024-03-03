@@ -18,6 +18,7 @@ from ANN_model import MixedPoissonANNModel, create_model
 from engine import train, online_nn, error_analysis
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import pickle
 
 print(dolfinx.__version__)
 
@@ -25,7 +26,7 @@ class MixedPoissonSolver:
     def __init__(self):
         self.comm = MPI.COMM_WORLD
         ### TODO: Change mesh
-        self.msh = mesh.create_unit_square(self.comm, 32, 32, mesh.CellType.quadrilateral)
+        self.msh = mesh.create_unit_square(self.comm, 50, 50, mesh.CellType.quadrilateral)
         self.MU = [fem.Constant(self.msh, PETSc.ScalarType(5.)),
                     fem.Constant(self.msh, PETSc.ScalarType(10.)),
                     fem.Constant(self.msh, PETSc.ScalarType(1./0.02)),
@@ -121,8 +122,9 @@ class PODReducedProblem:
         self._basis_functions_u = rbnicsx.backends.FunctionsList(Q)
         sigma, u = ufl.TrialFunction(V), ufl.TrialFunction(Q)
         v, q = ufl.TestFunction(V), ufl.TestFunction(Q)
-        self._inner_product_sigma = inner(sigma, v) * dx + \
-            inner(grad(sigma), grad(v)) * dx
+        # self._inner_product_sigma = inner(sigma, v) * dx + \
+            # inner(grad(sigma), grad(v)) * dx
+        self._inner_product_sigma = inner(sigma, v) * dx 
         self._inner_product_action_sigma = \
             rbnicsx.backends.bilinear_form_action(self._inner_product_sigma,
                                                   part="real")
@@ -157,9 +159,7 @@ class PODReducedProblem:
         return self._project_snapshot_u(solution, N)
 
     def _project_snapshot_sigma(self, solution, N):
-        ### This line can be replaced by an offline function?
         projected_snapshot_sigma = rbnicsx.online.create_vector(N)
-        # projected_snapshot_sigma = np.random.rand(N)
         A = rbnicsx.backends.\
             project_matrix(self._inner_product_action_sigma,
                            self._basis_functions_sigma[:N])
@@ -177,7 +177,6 @@ class PODReducedProblem:
 
     def _project_snapshot_u(self, solution, N):
         projected_snapshot_u = rbnicsx.online.create_vector(N)
-        # projected_snapshot_u = np.random.rand(N)
         A = rbnicsx.backends.\
             project_matrix(self._inner_product_action_u,
                            self._basis_functions_u[:N])
@@ -215,30 +214,22 @@ class PODReducedProblem:
 
     def norm_error_sigma(self, sigma, q):
         return self.compute_norm_sigma(sigma-q)/self.compute_norm_sigma(sigma)
-    
-"""
-### Test Solver
-mu_values = [5.0, 10.0, 1.0/0.02, 0.5, 0.5] 
-w_h = solver.solve(mu_values)
 
-sigma_h, u_h = w_h.split()
+def write_file_u(problem, file_name, solution_u):
+    with io.XDMFFile(problem.msh.comm, file_name, "w") as file:
+        file.write_mesh(problem.msh)
+        file.write_function(solution_u)
 
-with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/trial.xdmf", "w") as file:
-    file.write_mesh(solver.msh)
-    file.write_function(u_h)
-
-
-
-Sigma_plot_element = element("Lagrange", solver.msh.basix_cell(), solver.k, shape=(solver.msh.geometry.dim,))
-Sigma_plot = fem.FunctionSpace(solver.msh, Sigma_plot_element)
-sigma_h_plot = fem.Function(Sigma_plot)
-sigma_h_expr = fem.Expression(sigma_h, Sigma_plot.element.interpolation_points())
-sigma_h_plot.interpolate(sigma_h_expr)
+def write_file_sigma(problem, file_name, solution_sigma):
+    Sigma_plot_element = element("Lagrange", problem.msh.basix_cell(), problem.k, shape=(problem.msh.geometry.dim,))
+    Sigma_plot = fem.FunctionSpace(problem.msh, Sigma_plot_element)
+    sigma_h_plot = fem.Function(Sigma_plot)
+    sigma_h_expr = fem.Expression(solution_sigma, Sigma_plot.element.interpolation_points())
+    sigma_h_plot.interpolate(sigma_h_expr)
  
-with io.XDMFFile(solver.msh.comm, "out_mixed_poisson/sigma_trial.xdmf", "w") as file:
-    file.write_mesh(solver.msh)
-    file.write_function(sigma_h_plot)
-"""
+    with io.XDMFFile(problem.msh.comm, file_name, "w") as file:
+        file.write_mesh(problem.msh)
+        file.write_function(sigma_h_plot)
 
 def generate_training_set(sample_size = [3, 3, 3, 3, 3]):
     # Generate input parameter matrix for MU, depending on sample_size
@@ -276,10 +267,10 @@ def create_training_snapshots(training_set, problem_parametric):
 
 problem_parametric = MixedPoissonSolver()
 reduced_problem = PODReducedProblem(problem_parametric)
-SAMPLE_SIZE = [4, 4, 3, 3, 3]
+SAMPLE_SIZE = [4, 4, 4, 3, 3]
 training_set = generate_training_set(SAMPLE_SIZE)
 snapshots_matrix_sigma, snapshots_matrix_u = create_training_snapshots(training_set, problem_parametric)
-Nmax = 20
+Nmax = 30
 
 print(rbnicsx.io.TextLine("Perform POD", fill="#"))
 eigenvalues_u, modes_u, _ = rbnicsx.backends.\
@@ -291,6 +282,9 @@ eigenvalues_sigma, modes_sigma, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_sigma,
                                     reduced_problem._inner_product_action_sigma,
                                     N=Nmax, tol=1e-4)
+
+modes_u._save("Saved_modes", "mode_u")
+modes_u._save("Saved_modes", "mode_sigma")
 
 def plotting_eigenvalues(eigen_u, eigen_sigma, num=50, fontsize=14):
     
@@ -315,15 +309,29 @@ def plotting_eigenvalues(eigen_u, eigen_sigma, num=50, fontsize=14):
 
 reduced_problem._basis_functions_u.extend(modes_u)
 reduced_problem._basis_functions_sigma.extend(modes_sigma)
-print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
-print("First 20 eigenvalues for u:", eigenvalues_u[:20])
+print("First 30 eigenvalues for sigma:", eigenvalues_sigma[:20])
+print("First 30 eigenvalues for u:", eigenvalues_u[:20])
 print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")       
 # plotting_eigenvalues(eigenvalues_u, eigenvalues_sigma)
 
+def calculate_error_u(problem, reduced_problem, original_solution, rb_solution):
+    regenerated_solution = reduced_problem.reconstruct_solution_u(rb_solution)
+    error = fem.Function(problem.V.sub(1).collapse()[0])
+    error = regenerated_solution - original_solution
+    norm_error =  reduced_problem.compute_norm_u(error) / reduced_problem.compute_norm_u(original_solution)
+    return norm_error
+
+def calculate_error_sigma(problem, reduced_problem, original_solution, rb_solution):
+    regenerated_solution = reduced_problem.reconstruct_solution_sigma(rb_solution)
+    error = fem.Function(problem.V.sub(0).collapse()[0])
+    error = regenerated_solution - original_solution
+    norm_error = reduced_problem.compute_norm_sigma(error)/reduced_problem.compute_norm_sigma(original_solution)
+    return norm_error
+
 def generate_ann_input_set(num_samples = 32):
-    limits = np.array([[5, 20], [5, 20],
-                       [10, 50], [0.2, 0.8], 
-                       [0.2, 0.8]])
+    limits = np.array([[5, 20], [10, 20],
+                       [10, 50], [0.3, 0.7], 
+                       [0.3, 0.7]])
     sampling = LHS(xlimits=limits)
     x = sampling(num_samples)
     return x
@@ -352,6 +360,15 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
         output_set_sigma[i, :] = rb_solution_sigma.array  
         output_set_u[i, :] = rb_solution_u.array
         original_solutions[tuple(mu)] = [solution_u, solution_sigma]
+        """
+        if i % 5 == 0:
+            regenerated_solution_u = reduced_problem.reconstruct_solution_u(rb_solution_u)
+            regenerated_solution_sigma = reduced_problem.reconstruct_solution_sigma(rb_solution_sigma)
+            write_file_u(problem_parametric, f"new_inner_mesh64_1024samples/OldU{i}.xdmf", solution_u)
+            write_file_u(problem_parametric, f"new_inner_mesh64_1024samples/NewU{i}.xdmf", regenerated_solution_u)
+            write_file_sigma(problem_parametric, f"new_inner_mesh64_1024samples/OldSIGMA{i}.xdmf", solution_sigma)
+            write_file_sigma(problem_parametric, f"new_inner_mesh64_1024samples/NewSIGMA{i}.xdmf", regenerated_solution_sigma)
+        """
         # u_error = reduced_problem.norm_error_u(solution_u, rb_solution_u)
         # sigma_error = reduced_problem.norm_error_sigma(solution_sigma, rb_solution_sigma)
         u_error = calculate_error_u(problem_parametric, reduced_problem, solution_u, rb_solution_u)
@@ -361,30 +378,17 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
 
     return output_set_u, output_set_sigma, errors_u, errors_sigma, original_solutions
 
-def calculate_error_u(problem, reduced_problem, original_solution, rb_solution):
-    regenerated_solution = reduced_problem.reconstruct_solution_u(rb_solution)
-    error = fem.Function(problem.V.sub(1).collapse()[0])
-    error = regenerated_solution - original_solution
-    norm_error =  reduced_problem.compute_norm_u(error) / reduced_problem.compute_norm_u(original_solution)
-    return norm_error
-
-def calculate_error_sigma(problem, reduced_problem, original_solution, rb_solution):
-    regenerated_solution = reduced_problem.reconstruct_solution_sigma(rb_solution)
-    error = fem.Function(problem.V.sub(0).collapse()[0])
-    error = regenerated_solution - original_solution
-    norm_error = reduced_problem.compute_norm_sigma(error)/reduced_problem.compute_norm_sigma(original_solution)
-    return norm_error
-
 ### TODO: Visualise new reconstructed POD solution vs FEM solution using new samples
 ### TODO: Increase number of samples for NN
 
-ann_input_set = generate_ann_input_set(50)
-# ann_input_set = generate_training_set([2,2,2,2,2])
+ann_input_set = generate_ann_input_set(1000)
 ann_output_set_u, ann_output_set_sigma, POD_errors_u, POD_errors_sigma, highfid_solutions = \
                             generate_ann_output_set(problem_parametric, reduced_problem, ann_input_set)
 print(f"The mean error for U from POD on the inputs is {np.mean(POD_errors_u): 4f}, and the maximum error is {np.max(POD_errors_u): 4f}")
 print(f"The mean error for SIGMA from POD on the inputs is {np.mean(POD_errors_sigma): 4f}, and the maximum error is {np.max(POD_errors_sigma): 4f}")
-exit()
+with open('saved_mesh50_576POD_1000ANN.pkl', 'wb') as f:
+    pickle.dump((ann_input_set, ann_output_set_sigma, ann_output_set_u), f)
+
 # Update the input and output ranges by looking for the max and min values
 # Outputs range can be updated by directly look for the single max and min
 # Inputs range is updated using specific methods
@@ -394,7 +398,7 @@ reduced_problem.output_range_sigma[0] = np.min(ann_output_set_sigma)
 reduced_problem.output_range_sigma[1] = np.max(ann_output_set_sigma)
 
 ### TODO: Keep the same input range for POD and for ANN training, use POD range
-reduced_problem.update_input_range(ann_input_set)
+reduced_problem.update_input_range(training_set)
 
 print(ann_output_set_u.shape)
 
@@ -447,7 +451,7 @@ model_u = create_model(input_shape = 5, output_shape = len(reduced_problem._basi
 loss_object = tf.keras.losses.MeanAbsoluteError()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
-NUM_EPOCH = 20
+NUM_EPOCH = 40
 result_dict = train(model_u,
                     train_dataloader=train_dataloader_u,
                     test_dataloader=test_dataloader_u,
@@ -464,7 +468,7 @@ model_sigma = create_model(input_shape = 5, output_shape = len(reduced_problem._
 loss_object = tf.keras.losses.MeanAbsoluteError()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
-NUM_EPOCH = 20
+NUM_EPOCH = 50
 result_dict = train(model_sigma,
                     train_dataloader=train_dataloader_sigma,
                     test_dataloader=test_dataloader_sigma,
@@ -488,7 +492,7 @@ def plot_loss_over_epochs(train_results, fontsize=16, labelsize = 14):
     plt.legend(fontsize=labelsize)
     plt.show()
 
-# plot_loss_over_epochs(result_dict)
+plot_loss_over_epochs(result_dict)
 
 # error_analysis_mu_set = generate_training_set(sample_size = [2,2,2,2,2])
 
@@ -508,7 +512,7 @@ res = online_nn(reduced_problem, problem_parametric, mu,model_sigma,
 print("\n")
 print("Generating error analysis (only input/parameters) dataset")
 print("\n")
-error_analysis_set = generate_ann_input_set(100)
+error_analysis_set = generate_ann_input_set(50)
 error_numpy_u = np.zeros(error_analysis_set.shape[0])
 error_numpy_sigma = np.zeros(error_analysis_set.shape[0])
 
@@ -544,6 +548,6 @@ for i in range(error_analysis_set.shape[0]):
     print(f"Error for U: {error_numpy_u[i]}")
     print(f"Error for SIGMA: {error_numpy_sigma[i]}")
 
-print("Final results for a sigmoid activation functio with 500 training and validation samples:")
+print("Final results for a sigmoid activation functio with 1000 training and validation samples:")
 print(f"Mean error for U is: {np.mean(error_numpy_u):4f}; Mean Error for SIGMA is {np.mean(error_numpy_sigma):4f}")
 print(f"Maximum error for U and SIGMA are: {np.max(error_numpy_u):4f}, {np.max(error_numpy_sigma):4f}")
