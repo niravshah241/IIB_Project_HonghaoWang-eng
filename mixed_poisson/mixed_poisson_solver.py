@@ -140,10 +140,9 @@ class PODReducedProblem:
 
         self.input_scaling_range = [0., 1.]
         self.input_range = \
-            np.array([[5, 10, 50, 0.5, 0.5],
-                      [5, 10, 50, 0.5, 0.5]])
+            np.array([[None, None, None, None, None],
+                      [None, None, None, None, None]])
     
-
     def reconstruct_solution_sigma(self, reduced_solution):
         return self._basis_functions_sigma[:reduced_solution.size] * \
             reduced_solution
@@ -378,16 +377,15 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
 
     return output_set_u, output_set_sigma, errors_u, errors_sigma, original_solutions
 
-### TODO: Visualise new reconstructed POD solution vs FEM solution using new samples
-### TODO: Increase number of samples for NN
-
 ann_input_set = generate_ann_input_set(1000)
 ann_output_set_u, ann_output_set_sigma, POD_errors_u, POD_errors_sigma, highfid_solutions = \
                             generate_ann_output_set(problem_parametric, reduced_problem, ann_input_set)
 print(f"The mean error for U from POD on the inputs is {np.mean(POD_errors_u): 4f}, and the maximum error is {np.max(POD_errors_u): 4f}")
 print(f"The mean error for SIGMA from POD on the inputs is {np.mean(POD_errors_sigma): 4f}, and the maximum error is {np.max(POD_errors_sigma): 4f}")
-with open('saved_mesh50_576POD_1000ANN.pkl', 'wb') as f:
-    pickle.dump((ann_input_set, ann_output_set_sigma, ann_output_set_u), f)
+
+
+#with open('saved_mesh50_576POD_1000ANN.pkl', 'wb') as f:
+    #pickle.dump((ann_input_set, ann_output_set_sigma, ann_output_set_u), f)
 
 # Update the input and output ranges by looking for the max and min values
 # Outputs range can be updated by directly look for the single max and min
@@ -397,7 +395,6 @@ reduced_problem.output_range_u[1] = np.max(ann_output_set_u)
 reduced_problem.output_range_sigma[0] = np.min(ann_output_set_sigma)
 reduced_problem.output_range_sigma[1] = np.max(ann_output_set_sigma)
 
-### TODO: Keep the same input range for POD and for ANN training, use POD range
 reduced_problem.update_input_range(training_set)
 
 print(ann_output_set_u.shape)
@@ -444,14 +441,13 @@ for X, y in train_dataloader_u:
     print(f"y dtype: {y.dtype}")
     break
 
-
 ### TRAINING FOR MODEL U
 model_u = create_model(input_shape = 5, output_shape = len(reduced_problem._basis_functions_u), 
                            hidden_layers_neurons = [25,25,25], activation='sigmoid')
 loss_object = tf.keras.losses.MeanAbsoluteError()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
-NUM_EPOCH = 40
+NUM_EPOCH = 200
 result_dict = train(model_u,
                     train_dataloader=train_dataloader_u,
                     test_dataloader=test_dataloader_u,
@@ -460,15 +456,12 @@ result_dict = train(model_u,
                     epochs=NUM_EPOCH,
                     device="cpu")
 
-### TODO: Increase max epoch, use early stopping, refine learning rate
-
 ### TRAINING FOR MODEL SIGMA
 model_sigma = create_model(input_shape = 5, output_shape = len(reduced_problem._basis_functions_sigma), 
                            hidden_layers_neurons = [25,25,25], activation='sigmoid')
 loss_object = tf.keras.losses.MeanAbsoluteError()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
-NUM_EPOCH = 50
 result_dict = train(model_sigma,
                     train_dataloader=train_dataloader_sigma,
                     test_dataloader=test_dataloader_sigma,
@@ -494,28 +487,14 @@ def plot_loss_over_epochs(train_results, fontsize=16, labelsize = 14):
 
 plot_loss_over_epochs(result_dict)
 
-# error_analysis_mu_set = generate_training_set(sample_size = [2,2,2,2,2])
-
-# loaded_model = tf.keras.models.load_model('sigma_model')
-
-"""
-mu = [[0.5,10, 50, 0.5, 0.5]]
-res = online_nn(reduced_problem, problem_parametric, mu,model_sigma, 
-                rb_size = len(modes_sigma),
-                input_scaling_range=reduced_problem.input_scaling_range, 
-                output_scaling_range=reduced_problem.output_scaling_range_sigma,
-                input_range=reduced_problem.input_range, 
-                output_range=reduced_problem.output_range_sigma, 
-                verbose=False)
-"""
-
 print("\n")
 print("Generating error analysis (only input/parameters) dataset")
 print("\n")
 error_analysis_set = generate_ann_input_set(50)
 error_numpy_u = np.zeros(error_analysis_set.shape[0])
 error_numpy_sigma = np.zeros(error_analysis_set.shape[0])
-
+ann_solutions_u = [None]*error_analysis_set.shape[0]
+ann_solutions_sigma = [None]*error_analysis_set.shape[0]
 for i in range(error_analysis_set.shape[0]):
     print(f"Error analysis parameter number {i+1} of ")
     print(f"{error_analysis_set.shape[0]}: {error_analysis_set[i,:]}")
@@ -523,30 +502,45 @@ for i in range(error_analysis_set.shape[0]):
     solution_sigma, solution_u = w_h.split()
     fem_solution_sigma = solution_sigma.collapse()
     fem_solution_u = solution_u.collapse()
-    error_numpy_u[i] = error_analysis(reduced_problem, problem_parametric,
-                                      error_analysis_set[i, :], model_u,
-                                      len(reduced_problem._basis_functions_u), 
-                                      online_nn, fem_solution_u,
-                                      norm_error=reduced_problem.norm_error_u,
-                                      reconstruct_solution=reduced_problem.reconstruct_solution_u,
-                                      input_scaling_range=reduced_problem.input_scaling_range,
-                                      output_scaling_range=reduced_problem.output_scaling_range_u,
-                                      input_range=reduced_problem.input_range,
-                                      output_range=reduced_problem.output_range_u)
+    error_numpy_u[i], ann_solutions_u[i] = error_analysis(reduced_problem, problem_parametric,
+                                                        error_analysis_set[i, :], model_u,
+                                                        len(reduced_problem._basis_functions_u), 
+                                                        online_nn, fem_solution_u,
+                                                        norm_error=reduced_problem.norm_error_u,
+                                                        reconstruct_solution=reduced_problem.reconstruct_solution_u,
+                                                        input_scaling_range=reduced_problem.input_scaling_range,
+                                                        output_scaling_range=reduced_problem.output_scaling_range_u,
+                                                        input_range=reduced_problem.input_range,
+                                                        output_range=reduced_problem.output_range_u)
     
-    error_numpy_sigma[i] = error_analysis(reduced_problem, problem_parametric, 
-                                        error_analysis_set[i, :], model_sigma,
-                                        len(reduced_problem._basis_functions_sigma), 
-                                        online_nn, fem_solution_sigma,
-                                        norm_error=reduced_problem.norm_error_sigma,
-                                        reconstruct_solution=reduced_problem.reconstruct_solution_sigma, 
-                                        input_scaling_range=reduced_problem.input_scaling_range, 
-                                        output_scaling_range=reduced_problem.output_scaling_range_sigma, 
-                                        input_range=reduced_problem.input_range,
-                                        output_range=reduced_problem.output_range_sigma)
+    error_numpy_sigma[i], ann_solutions_sigma[i] = error_analysis(reduced_problem, problem_parametric, 
+                                                                error_analysis_set[i, :], model_sigma,
+                                                                len(reduced_problem._basis_functions_sigma), 
+                                                                online_nn, fem_solution_sigma,
+                                                                norm_error=reduced_problem.norm_error_sigma,
+                                                                reconstruct_solution=reduced_problem.reconstruct_solution_sigma, 
+                                                                input_scaling_range=reduced_problem.input_scaling_range, 
+                                                                output_scaling_range=reduced_problem.output_scaling_range_sigma, 
+                                                                input_range=reduced_problem.input_range,
+                                                                output_range=reduced_problem.output_range_sigma)
     
     print(f"Error for U: {error_numpy_u[i]}")
     print(f"Error for SIGMA: {error_numpy_sigma[i]}")
+
+    ### Plotting FEM, POD_reconsturcted and ANN solutions for comparison
+    if i % 20 == 0:
+        rb_size_sigma = len(reduced_problem._basis_functions_sigma)
+        rb_size_u = len(reduced_problem._basis_functions_u)
+        rb_solution_sigma = reduced_problem.project_snapshot_sigma(fem_solution_sigma, rb_size_sigma)
+        rb_solution_u = reduced_problem.project_snapshot_u(fem_solution_u, rb_size_u)
+        regenerated_solution_u = reduced_problem.reconstruct_solution_u(rb_solution_u)
+        regenerated_solution_sigma = reduced_problem.reconstruct_solution_sigma(rb_solution_sigma)
+        write_file_u(problem_parametric, f"Solutions_Comparison/FEM_U{i}.xdmf", fem_solution_u)
+        write_file_u(problem_parametric, f"Solutions_Comparison/POD_U{i}.xdmf", regenerated_solution_u)
+        write_file_u(problem_parametric, f"Solutions_Comparison/ANN_U{i}.xdmf", ann_solutions_u[i])
+        write_file_sigma(problem_parametric, f"Solutions_Comparison/FEM_SIGMA{i}.xdmf", fem_solution_sigma)
+        write_file_sigma(problem_parametric, f"Solutions_Comparison/POD_SIGMA{i}.xdmf", regenerated_solution_sigma)
+        write_file_sigma(problem_parametric, f"Solutions_Comparison/ANN_SIGMA{i}.xdmf", ann_solutions_sigma[i])
 
 print("Final results for a sigmoid activation functio with 1000 training and validation samples:")
 print(f"Mean error for U is: {np.mean(error_numpy_u):4f}; Mean Error for SIGMA is {np.mean(error_numpy_sigma):4f}")
