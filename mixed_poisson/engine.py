@@ -2,6 +2,7 @@ from typing import Dict, List, Tuple
 from tqdm.auto import tqdm
 import tensorflow as tf
 import rbnicsx
+from tensorflow.keras.callbacks import EarlyStopping
 
 def train_step(model: tf.keras.Model,
                dataloader: tf.data.Dataset,
@@ -92,7 +93,8 @@ def train(model: tf.keras.Model,
           optimizer: tf.optimizers.Optimizer,
           loss_fn: tf.keras.losses.Loss,
           epochs: int,
-          device: str) -> Dict[str, List[float]]:
+          device: str,
+          early_stopping = 5) -> Dict[str, List[float]]:
     """Trains and tests a TensorFlow model.
 
     Args:
@@ -105,21 +107,16 @@ def train(model: tf.keras.Model,
     device: A target device to compute on (e.g. "cuda" or "cpu").
 
     Returns:
-    A dictionary of training and testing loss as well as training and
-    testing accuracy metrics. Each metric has a value in a list for
-    each epoch.
+    A dictionary of training and testing loss for each epoch.
     In the form: {train_loss: [...],
-                  train_acc: [...],
-                  test_loss: [...],
-                  test_acc: [...]}
-    For example if training for epochs=2:
-                 {train_loss: [2.0616, 1.0537],
-                  train_acc: [0.3945, 0.3945],
-                  test_loss: [1.2641, 1.5706],
-                  test_acc: [0.3400, 0.2973]}
+                  test_loss: [...]}
     """
+
     result_dict = {"train_loss": [],
                    "test_loss": []}
+
+    # Define Early Stopping callback
+    early_stopping = EarlyStopping(monitor='val_loss', patience=early_stopping, restore_best_weights=True)
 
     for epoch in tqdm(range(epochs)):
         train_loss = train_step(model=model,
@@ -139,6 +136,12 @@ def train(model: tf.keras.Model,
 
         result_dict["train_loss"].append(train_loss)
         result_dict["test_loss"].append(test_loss)
+
+        # Check for early stopping
+        if len(result_dict["test_loss"]) > early_stopping.patience and \
+           all(result_dict["test_loss"][-1 - i] > result_dict["test_loss"][-2 - i] for i in range(early_stopping.patience)):
+            print("Early stopping triggered!")
+            break
 
     return result_dict
 
@@ -188,7 +191,7 @@ def online_nn(reduced_problem, problem, online_mu, model, rb_size,
     
     online_mu_scaled_tensor = tf.convert_to_tensor(online_mu_scaled, dtype=tf.float32)
     pred_scaled = model(online_mu_scaled_tensor)
-    pred_scaled_numpy = pred_scaled.numpy()
+    pred_scaled_numpy = pred_scaled.numpy().copy()
     pred = (pred_scaled_numpy - output_scaling_range[0]) * (output_range[1] - output_range[0]) /   \
             (output_scaling_range[1] - output_scaling_range[0]) + output_range[0]
 
@@ -239,6 +242,7 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
             reduced_problem.reconstruct_solution(ann_prediction)
     else:
         ann_reconstructed_solution = reconstruct_solution(ann_prediction)
+
     """
     fem_solution = problem.solve(error_analysis_mu)
     if type(fem_solution) == tuple:
@@ -246,9 +250,10 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
         fem_solution = fem_solution[index]
     
     """
+    
     if norm_error is None:
         error = reduced_problem.norm_error(fem_solution,
                                            ann_reconstructed_solution)
     else:
         error = norm_error(fem_solution, ann_reconstructed_solution)
-    return error
+    return error, ann_reconstructed_solution
