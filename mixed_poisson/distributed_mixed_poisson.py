@@ -267,7 +267,7 @@ def create_training_snapshots(training_set, problem_parametric):
 
 # reduced_problem = PODReducedProblem(problem_parametric)
 
-SAMPLE_SIZE = [2, 2, 1, 1, 1]
+SAMPLE_SIZE = [4, 4, 3, 3, 3]
 num_snapshots = np.product(np.array(SAMPLE_SIZE))
 
 world_comm = MPI.COMM_WORLD
@@ -295,27 +295,35 @@ if world_comm.rank == 0:
 
 
 sample_mu = [5,10,50,0.5,0.5]
-problem_parametric0 = MixedPoissonSolver(world_comm)
-solution = problem_parametric0.solve(sample_mu)
+problem_parametric = MixedPoissonSolver(world_comm)
+solution = problem_parametric.solve(sample_mu)
 solution_sigma, solution_u = solution.split()
 solution_sigma = solution_sigma.collapse()
 solution_u = solution_u.collapse()
-u_dof = len(solution_u.x.array)
-sigma_dof = len(solution_sigma.x.array)
-solution_dof = len(solution.x.array)
-# u_dofs = world_comm.allreduce(u_dof, op=MPI.SUM)
-# sigma_dofs = world_comm.allreduce(sigma_dof, op=MPI.SUM)
-solution_dofs = world_comm.allreduce(solution_dof, op=MPI.SUM)
+rstart_u, rend_u = solution_u.vector.getOwnershipRange()
+rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
+u_dof = rend_u - rstart_u
+sigma_dof = rend_sigma - rstart_sigma
 
+world_comm.Barrier()
+u_dofs = world_comm.allreduce(u_dof, op=MPI.SUM)
+sigma_dofs = world_comm.allreduce(sigma_dof, op=MPI.SUM)
 
-# training_set_solution_sigma = np.ndarray(shape=(num_snapshots, sigma_dofs))
-training_set_solution = np.ndarray(shape=(num_snapshots, solution_dof))
-group0_procs = world_comm.group.Incl([0, 2])
+# solution_dofs = world_comm.allreduce(solution_dof, op=MPI.SUM)
+
+world_comm.Barrier()
+if world_comm.rank == 0:
+    print(u_dofs, sigma_dofs)
+
+training_set_solution_sigma = np.zeros(shape=(num_snapshots, sigma_dofs))
+training_set_solution_u = np.zeros(shape=(num_snapshots, u_dofs))
+group0_procs = world_comm.group.Incl([0, 1])
 gpu_group0_comm = world_comm.Create_group(group0_procs)
-group1_procs = world_comm.group.Incl([1, 3])
+group1_procs = world_comm.group.Incl([2, 3])
 gpu_group1_comm = world_comm.Create_group(group1_procs)
 
 world_comm.Barrier()
+
 if gpu_group0_comm != MPI.COMM_NULL:
     problem_parametric0 = MixedPoissonSolver(gpu_group0_comm)
     indices_group0 = np.arange(0, num_snapshots, 2)
@@ -325,11 +333,12 @@ if gpu_group0_comm != MPI.COMM_NULL:
         # print(len(solution_u.x.array), len(solution_sigma.x.array))
         solution_sigma = solution_sigma.collapse()
         solution_u = solution_u.collapse()
-        rstart, rend = solution.vector.getOwnershipRange()
-        # rstart_u, rend_u = solution_u.vector.getOwnershipRange()
-        # rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
-        print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart}, rend: {rend}, lengh of this solution: {len(solution.x.array)}")
-        training_set_solution[i, rstart:rend] = solution.x.array
+        # rstart, rend = solution.vector.getOwnershipRange()
+        rstart_u, rend_u = solution_u.vector.getOwnershipRange()
+        rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
+        # print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, lengh of this solution: {len(solution_u.x.array)}")
+        training_set_solution_u[i, rstart_u:rend_u] = solution_u.vector[rstart_u:rend_u] 
+        training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.vector[rstart_sigma:rend_sigma] 
         #training_set_solution_u[i, rstart_u:rend_u] = solution_u.x.array[rstart_u:rend_u]
         #training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.x.array[rstart_sigma:rend_sigma]
 
@@ -337,26 +346,78 @@ if gpu_group1_comm != MPI.COMM_NULL:
     problem_parametric1 = MixedPoissonSolver(gpu_group1_comm)
     indices_group1 = np.arange(1, num_snapshots, 2)
     for i in indices_group1:
-        solution = problem_parametric0.solve(training_set[i, :])
+        solution = problem_parametric1.solve(training_set[i, :])
         solution_sigma, solution_u = solution.split()
         solution_sigma = solution_sigma.collapse()
         solution_u = solution_u.collapse()
-        rstart, rend = solution.vector.getOwnershipRange()
-        # rstart_u, rend_u = solution_u.vector.getOwnershipRange()
-        # rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
-        print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart}, rend: {rend}, lengh of this solution: {len(solution.x.array)}")
-        training_set_solution[i, rstart:rend] = solution.x.array
+        rstart_u, rend_u = solution_u.vector.getOwnershipRange()
+        rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
+        print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, lengh of this solution: {len(solution_u.x.array)}")
+        training_set_solution_u[i, rstart_u:rend_u] = solution_u.vector[rstart_u:rend_u] 
+        training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.vector[rstart_sigma:rend_sigma] 
         #training_set_solution_u[i, rstart_u:rend_u] = solution_u.x.array[rstart_u:rend_u]
         #training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.x.array[rstart_sigma:rend_sigma]
 
-# snapshots_matrix_sigma = world_comm.allreduce(training_set_solution_sigma, op=MPI.SUM)
-# snapshots_matrix_u = world_comm.allreduce(training_set_solution_u, op=MPI.SUM)
+snapshots_array_sigma = world_comm.allreduce(training_set_solution_sigma, op=MPI.SUM)
+snapshots_array_u = world_comm.allreduce(training_set_solution_u, op=MPI.SUM)
 
-exit()
-snapshots_matrix_sigma, snapshots_matrix_u = create_training_snapshots(training_set, problem_parametric)
+world_comm.Barrier()
+if world_comm.rank == 0:
+    print("")
+    print("Snapshots arrays completed. Setting up snapshots matrix")
+
+world_comm.Barrier()
+
+V = problem_parametric.V.sub(0).collapse()[0]
+Q = problem_parametric.V.sub(1).collapse()[0]
+snapshots_matrix_sigma = rbnicsx.backends.FunctionsList(V)
+snapshots_matrix_u = rbnicsx.backends.FunctionsList(Q)
+
+if gpu_group0_comm != MPI.COMM_NULL:
+    for i in indices_group0:
+        solution_empty_sigma = fem.Function(V)
+        solution_empty_u = fem.Function(Q)
+        rstart_u, rend_u = solution_empty_u.vector.getOwnershipRange()
+        rstart_sigma, rend_sigma = solution_empty_sigma.vector.getOwnershipRange()
+        solution_empty_u.vector[rstart_u:rend_u] = snapshots_array_u[i, rstart_u:rend_u]
+        # print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, before assembling solution: {solution_empty_u.x.array}")
+        solution_empty_u.x.scatter_forward()
+        solution_empty_u.vector.assemble()
+        solution_empty_sigma.vector[rstart_sigma:rend_sigma] = snapshots_array_sigma[i, rstart_sigma:rend_sigma]
+        solution_empty_sigma.x.scatter_forward()
+        solution_empty_sigma.vector.assemble()
+        snapshots_matrix_u.append(solution_empty_u)
+        snapshots_matrix_sigma.append(solution_empty_sigma)
+        print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
+              lengh of this solution: {len(solution_empty_u.x.array)},  length of snapshot matrix: {len(snapshots_matrix_u)}")
+
+if gpu_group1_comm != MPI.COMM_NULL:
+    for i in indices_group1:
+        solution_empty_sigma = fem.Function(V)
+        solution_empty_u = fem.Function(Q)
+        rstart_u, rend_u = solution_empty_u.vector.getOwnershipRange()
+        rstart_sigma, rend_sigma = solution_empty_sigma.vector.getOwnershipRange()
+        solution_empty_u.vector[rstart_u:rend_u] = snapshots_array_u[i, rstart_u:rend_u]
+        # print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, before assembling solution: {solution_empty_u.x.array}")
+        solution_empty_u.x.scatter_forward()
+        solution_empty_u.vector.assemble()
+        solution_empty_sigma.vector[rstart_sigma:rend_sigma] = snapshots_array_sigma[i, rstart_sigma:rend_sigma]
+        solution_empty_sigma.x.scatter_forward()
+        solution_empty_sigma.vector.assemble()
+        snapshots_matrix_u.append(solution_empty_u)
+        snapshots_matrix_sigma.append(solution_empty_sigma)
+        print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
+              lengh of this solution: {len(solution_empty_u.x.array)}, length of snapshot matrix: {len(snapshots_matrix_u)}")
+
+problem_parametric = MixedPoissonSolver(world_comm)
+reduced_problem = PODReducedProblem(problem_parametric)
 Nmax = 30
 
-print(rbnicsx.io.TextLine("Perform POD", fill="#"))
+world_comm.Barrier()
+print(len(snapshots_matrix_u))
+world_comm.Barrier()
+if world_comm.rank == 0:
+    print(rbnicsx.io.TextLine("Perform POD", fill="#"))
 eigenvalues_u, modes_u, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_u,
                                     reduced_problem._inner_product_action_u,
@@ -393,10 +454,14 @@ def plotting_eigenvalues(eigen_u, eigen_sigma, num=50, fontsize=14):
 
 reduced_problem._basis_functions_u.extend(modes_u)
 reduced_problem._basis_functions_sigma.extend(modes_sigma)
-print("First 30 eigenvalues for sigma:", eigenvalues_sigma[:20])
-print("First 30 eigenvalues for u:", eigenvalues_u[:20])
-print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")       
-# plotting_eigenvalues(eigenvalues_u, eigenvalues_sigma)
+
+if world_comm.rank == 0:
+    print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
+    print("First 20 eigenvalues for u:", eigenvalues_u[:20])
+    print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")       
+    plotting_eigenvalues(eigenvalues_u, eigenvalues_sigma)
+
+exit()
 
 def calculate_error_u(problem, reduced_problem, original_solution, rb_solution):
     regenerated_solution = reduced_problem.reconstruct_solution_u(rb_solution)
