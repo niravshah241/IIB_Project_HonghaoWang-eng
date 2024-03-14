@@ -267,7 +267,7 @@ def create_training_snapshots(training_set, problem_parametric):
 
 # reduced_problem = PODReducedProblem(problem_parametric)
 
-SAMPLE_SIZE = [4, 4, 3, 3, 3]
+SAMPLE_SIZE = [2, 2, 2, 1, 1]
 num_snapshots = np.product(np.array(SAMPLE_SIZE))
 
 world_comm = MPI.COMM_WORLD
@@ -317,9 +317,9 @@ if world_comm.rank == 0:
 
 training_set_solution_sigma = np.zeros(shape=(num_snapshots, sigma_dofs))
 training_set_solution_u = np.zeros(shape=(num_snapshots, u_dofs))
-group0_procs = world_comm.group.Incl([0, 1])
+group0_procs = world_comm.group.Incl([0,1])
 gpu_group0_comm = world_comm.Create_group(group0_procs)
-group1_procs = world_comm.group.Incl([2, 3])
+group1_procs = world_comm.group.Incl([2,3])
 gpu_group1_comm = world_comm.Create_group(group1_procs)
 
 world_comm.Barrier()
@@ -341,6 +341,8 @@ if gpu_group0_comm != MPI.COMM_NULL:
         training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.vector[rstart_sigma:rend_sigma] 
         #training_set_solution_u[i, rstart_u:rend_u] = solution_u.x.array[rstart_u:rend_u]
         #training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.x.array[rstart_sigma:rend_sigma]
+    #print("TRAINING SET U GROUP0:", training_set_solution_u)
+    #print("TRAINING SET SIG GROUP0:", training_set_solution_sigma)
 
 if gpu_group1_comm != MPI.COMM_NULL:
     problem_parametric1 = MixedPoissonSolver(gpu_group1_comm)
@@ -352,11 +354,13 @@ if gpu_group1_comm != MPI.COMM_NULL:
         solution_u = solution_u.collapse()
         rstart_u, rend_u = solution_u.vector.getOwnershipRange()
         rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
-        print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, lengh of this solution: {len(solution_u.x.array)}")
+        print(f"Parameter {i}, My rank in comm1: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, lengh of this solution: {len(solution_u.x.array)}")
         training_set_solution_u[i, rstart_u:rend_u] = solution_u.vector[rstart_u:rend_u] 
         training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.vector[rstart_sigma:rend_sigma] 
         #training_set_solution_u[i, rstart_u:rend_u] = solution_u.x.array[rstart_u:rend_u]
         #training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.x.array[rstart_sigma:rend_sigma]
+    #print("TRAINING SET U GROUP1:", training_set_solution_u)
+    #print("TRAINING SET SIG GROUP1:", training_set_solution_sigma)
 
 snapshots_array_sigma = world_comm.allreduce(training_set_solution_sigma, op=MPI.SUM)
 snapshots_array_u = world_comm.allreduce(training_set_solution_u, op=MPI.SUM)
@@ -374,6 +378,7 @@ snapshots_matrix_sigma = rbnicsx.backends.FunctionsList(V)
 snapshots_matrix_u = rbnicsx.backends.FunctionsList(Q)
 
 if gpu_group0_comm != MPI.COMM_NULL:
+    print("GROUP0:",indices_group0)
     for i in indices_group0:
         solution_empty_sigma = fem.Function(V)
         solution_empty_u = fem.Function(Q)
@@ -388,10 +393,12 @@ if gpu_group0_comm != MPI.COMM_NULL:
         solution_empty_sigma.vector.assemble()
         snapshots_matrix_u.append(solution_empty_u)
         snapshots_matrix_sigma.append(solution_empty_sigma)
-        print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
-              lengh of this solution: {len(solution_empty_u.x.array)},  length of snapshot matrix: {len(snapshots_matrix_u)}")
+        #print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
+              #lengh of this solution: {len(solution_empty_u.x.array)},  length of snapshot matrix: {len(snapshots_matrix_u)}")
+    print("GROUP0:",indices_group0, "Snapshot Matrix U:", snapshots_matrix_u[0].vector[rstart_u:rend_u])
 
 if gpu_group1_comm != MPI.COMM_NULL:
+    print("GROUP1:",indices_group1)
     for i in indices_group1:
         solution_empty_sigma = fem.Function(V)
         solution_empty_u = fem.Function(Q)
@@ -406,9 +413,9 @@ if gpu_group1_comm != MPI.COMM_NULL:
         solution_empty_sigma.vector.assemble()
         snapshots_matrix_u.append(solution_empty_u)
         snapshots_matrix_sigma.append(solution_empty_sigma)
-        print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
-              lengh of this solution: {len(solution_empty_u.x.array)}, length of snapshot matrix: {len(snapshots_matrix_u)}")
-
+        # print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
+              # lengh of this solution: {len(solution_empty_u.x.array)}, length of snapshot matrix: {len(snapshots_matrix_u)}")
+    print("GROUP1:",indices_group1, "Snapshot Matrix U:", snapshots_matrix_u[0].vector[rstart_u:rend_u]) 
 problem_parametric = MixedPoissonSolver(world_comm)
 reduced_problem = PODReducedProblem(problem_parametric)
 Nmax = 30
@@ -455,6 +462,10 @@ def plotting_eigenvalues(eigen_u, eigen_sigma, num=50, fontsize=14):
 reduced_problem._basis_functions_u.extend(modes_u)
 reduced_problem._basis_functions_sigma.extend(modes_sigma)
 
+print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
+print("First 20 eigenvalues for u:", eigenvalues_u[:20])
+print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")       
+exit()
 if world_comm.rank == 0:
     print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
     print("First 20 eigenvalues for u:", eigenvalues_u[:20])
