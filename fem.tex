@@ -1,0 +1,57 @@
+\section{Governing Equation and Finite Element Methods}
+The Finite Element Method(FEM) is a numerical method for approximating the solution of the governing PDE by discretising the problem domain into smaller elements. Over the discredited domain, the solution is approximated using piecewise polynomial functions. The weak formulation converts the PDE into an equivalent variational form. The general method of weak formulation involves multiplying the PDE by a test function $v$ and integrating it over the domain $\Omega$, which would allow us to perform integration by parts on those terms with second-order derivatives, simplifying the solution process.
+
+Work has been done on some PDEs such as the linear/non-linear Poisson equations, the Navier-Stokes equations etc. In this project, the problem of interest is the mixed formulation for the Poisson equation, which introduces an additional vector variable to represent the gradient of the scalar unknown, namely the (negative) flux, leading to the new PDE:
+
+\begin{align}
+    \Vec{\sigma} - \nabla u = 0 \quad \text{, in }\Omega    \label{eqn:PDE1}\\  
+    \nabla \cdot \Vec{\sigma} = -f \quad \text{, in }\Omega     \label{eqn:PDE2}
+\end{align}
+
+Subject to the Neumann  and Dirichlet boundary conditions:
+\begin{align}
+     \Vec{\sigma}  \cdot \Vec{n} =  g \quad \text{, on }\Gamma_{N} \label{eqn:boundary1} \\
+     u = u_0 \quad \text{, on }\Gamma_{D}   \label{eqn:boundary2}
+\end{align}
+
+Here $u$ and $\Vec{\sigma}$ are the scalar and the flux terms, and $\Vec{n}$ is the outward pointing normal vector on the boundary.
+
+Since FEniCSx is implemented based on the FEM, the first step is to convert the PDE into its variational form. Multiplying Equation \ref{eqn:PDE1} and \ref{eqn:PDE2} by test functions $\vec{\tau}$ and $v$, and integrating the gradient term by parts in the first equation, the following variational form is obtained:
+
+\begin{equation}
+\int_{\Omega} (\vec{\sigma} \cdot \vec{\tau} + \nabla \cdot \vec{\tau} \, u) \, d\Omega = \int_{\Gamma} \vec{\tau} \cdot \vec{n} \, u \, ds \quad \forall \vec{\tau} \in \Sigma
+\end{equation}
+
+\begin{equation}
+\int_{\Omega} \nabla \cdot \vec{\sigma} \, v \, d\Omega = - \int_{\Omega} f \, v \, d\Omega \quad \forall v \in V
+\end{equation}
+
+Inserting the boundary conditions from equation \ref{eqn:boundary1} and \ref{eqn:boundary2}, we can obtain the following equation to be solved for $(\vec{\sigma}, u) \in \Sigma_g \times V$:
+
+\begin{equation}
+    \int_{\Omega} \vec{\sigma} \cdot\vec{\tau} + \nabla \cdot \vec{\tau} \, u + \nabla \cdot \vec{\sigma} \, v  dx = -\int_{\Omega} f v \, dx + \int_{\Gamma_{D}} u_0 \vec{\tau} \cdot \vec{n}  ds
+    \label{eqn:variational_form}
+\end{equation}
+
+Where $\Sigma_g = \{\vec{\tau} \in H(\text{div}) \text{ such that } \vec{\tau} \cdot \vec{n}|_{\Gamma_N} = g\}$ and $V = L^2(\Omega)$. To discretise the formulation in equation \ref{eqn:variational_form} for FEM to work properly and stably, we used the  Brezzi-Douglas-Fortin-Marini function space with a polynomial degree of $k$ to represent $\Sigma$, and the Discontinuous Galerkin (DG) space with a degree of $k-1$ to represent $V$. The BDMCF space is defined on each mesh element and is designed to provide accurate approximations for vector quantities. The DG space allows discontinuities in the solution between neighbouring elements, making it particularly useful for problems with rapid changes or sharp gradients.  Listing 1 shows the example codes for defining the geometric function space of a mixed-formulation problem. In particular, we have set up a function space \textbf{V}, which is created by mixing the vector and scalar elements. The vector component (flux) \textbf{Q\_el} rests on a BDM element, and the scalar \textbf{P\_el} rests on DG space. 
+
+\begin{lstlisting}[frame=single, caption={Defining geometric parameters / Creating function space }]
+Q_el = basix.ufl.element("BDMCF", domain.basix_cell(), k)
+P_el = basix.ufl.element("DG", domain.basix_cell(), k - 1)
+V_el = basix.ufl.mixed_element([Q_el, P_el])
+V = fem.functionspace(domain, V_el)
+\end{lstlisting}
+
+The problem is defined and solved with code listing 2, where a LinearProblem object that brings everything together is created. The weak forms \textit{a} and \textit{L} define the PDE, \textit{bcs} includes the functions defining the boundary conditions. Special attention is drawn to the \textit{petsc\_options}, which specifies that the LU decomposition is used as a linear solver. The choice of solvers significantly impacts the efficiency and accuracy of solving linear systems in finite element simulations. Direct solvers like the LU decomposition in this case provide accurate solutions for smaller systems but may become computationally expensive as the problem size increases. Iterative solvers are also commonly found in linear problems, examples include the Conjugate Gradient (CG) or Generalized Minimal Residual (GMRES). They are suitable for large, sparse linear systems, but they are usually more complicated and require pre-conditioning to improve convergence.
+
+\begin{lstlisting}[frame=single, caption={Defining and solving the porblem}, basicstyle=\scriptsize]
+problem = fem.petsc.LinearProblem(a, L, bcs=bcs, 
+                                  petsc_options={"ksp_type":"preonly","pc_type":"lu"})
+w_h = problem.solve()   # solution manifold containing u and sigma
+\end{lstlisting}
+
+\vspace{1cm}
+
+\textcolor{red}{Model discussion on mesh choices? size of discretisation? Function spaces}
+
+\newpage

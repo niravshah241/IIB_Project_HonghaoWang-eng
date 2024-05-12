@@ -1,0 +1,68 @@
+\section{POD-ANN Based Model}
+
+Artificial Neural Network (ANN) is a computational model inspired by the human brain's neural networks. These networks consist of interconnected nodes, called neurons, which process information. ANNs learn from examples, adjusting their internal parameters through training. They are organized in layers, including an input layer where data is fed in, one or more hidden layers where computation occurs, and an output layer that produces the network's final output.
+
+In this section, a feed-forward ANN was built with TensorFlow separately for the scalar field $u$ and then flux term $\sigma$. In both models, the input layer has the dimension of input data (in this case, input $\bm{\mu}$ consisted of five parameters), and the output shapes are the number of reduced basis functions we obtained from POD. Different numbers of hidden layers were used between the inputs and outputs with n neurons for each layer, and the optimal number was determined through trial and error.  
+
+\subsection{Data Generation}
+The data samples are generated through a technique called Latin Hypercube Sampling (LHS), which is a statistical method for generating a near-random sample of parameter values from multiple-dimensional space. The process ensures that each sample represents a unique combination of values across all dimensions. 
+
+Consider the example of $N$ samples with $M$ dimensions \footnote{In our case, we chose $N=1000$ and $M=5$, the number of parameters in $\mathbf{\mu}$}, each parameter dimension is divided into $N$ equal intervals. Within each interval along each dimension, one point is randomly selected, and the samples within each dimension are randomly shuffled. Finally, the shuffled samples from each dimension are randomly combined to obtain the final set of $N$ Latin hypercube samples. LHS reduces systematic bias due to the sequential generation of samples through shuffling, while preserving the generality by considering samples across the whole interval within each dimension. 
+
+The LHS has provided us with a random set of input parameters. We could then calculate the corresponding outputs of shape $L$ by solving for the high-fidelity FEM solutions and project them onto the reduced basis space $\mathbf{V}_{rb}$ using the method described in section 3. 
+
+\subsection{Feature Scaling}
+Feature scaling is a method in data preprocessing that aims to normalise the values of variables within a dataset. This approach makes the data comparable on a similar scale and prevents any single feature from overshadowing others due to its larger values. In this project, the simple Min-Max Scaling scheme is used, where the data are scaled linearly based on a predefined range, usually determined by the activation function used \footnote{In this project, we mostly used the scaling range [0,1] with the sigmoid activation function or [-1, 1] with the tanh-hyperbolic activation function}. For a data set where the minimum and maximum values are $\mu_{min}$ and $\mu_{max}$, and the scaled range is $[a, b]$, each input $\mu_i$ can be scaled as:
+
+\begin{equation}
+    \mu^{norm}_i = \left( b - a \right) \times \frac{\mu_i - \mu_{min}}{\mu_{max} - \mu_{min}} + a
+    \label{eqn:data_scaling}
+\end{equation}
+
+Note that the input has five dimensions in total, so each dimension is scaled independently using Equation \ref{eqn:data_scaling}. In addition, Equation \ref{eqn:data_scaling} also defines the way of reconstructing the original $\mu_i$ using the scaled value $\mu^{norm}_i $.
+
+\subsection{Training of ANN}
+In this project, we used a feed-forward ANN with n hidden layers, each of H neurons.  The $N$ samples of data points are randomly split into an 80\% group for training and a 20\% group for validation purposes. The training dataset is also grouped into different batches of size $n$ to speed up the training of the ANN, which means that the losses are summed up within each batch before performing backward propagation for gradient optimisation.  
+
+In training the ANN, we used the Adam optimiser with a learning rate of 0.005, which was fine-tuned through trials and errors. 
+
+\textcolor{red}{Working on SGD as well, seemed like a good result was also obtained, not sure if go into detail on choice of optimiser }
+
+For the loss function, we used the mean absolute error(MAE), which measures the mean of the sum of the absolute difference of the coefficients between the predicted results and the original reduced basis coefficients for each mode:
+
+\begin{equation}
+    \text{MAE} = \frac{1}{N} \sum_{n=1}^{N} \sum_{l=1}^{L} | s_l^{(n)} - \hat{s_l}^{(n)}|
+\end{equation}
+
+To terminate the training of the ANN, we introduced two stopping criteria. The first one is simply the maximum number of training epochs, and the training stops if the number of training iterations exceed the limit. The second one is the early-stopping criterion with a tolerance of 3 training epochs. This means that if there are no improvements in the training data loss for 3 consecutive iterations, we would stop the training process and the model parameters at the point of early stopping are retained as the final model. The early-stopping criterion prevents overfitting of the training data and ensures the generality of the model, while the incorporated tolerance also gives a chance for the optimisation process to escape from the local optimum.   
+
+Batch normalisation was also used in the training process. It normalises the inputs of each layer in a neural network to have a mean of zero and a standard deviation of one. This is done by adjusting the activations using the mean and variance calculated over the current mini-batch. For each batch during training, before passing the inputs to the next layer, batch normalization computes the mean ($\mu_B$) and variance ($\sigma^2_B$) of the activations along each feature dimension. The activations for each feature are normalized using the mean and variance obtained from the mini-batch using $\hat{x}_i = \frac{x_i - \mu_B}{\sigma_B}$.
+
+The batch normalisation helps stabilise and speed up the training of deep neural networks by reducing internal covariate shifts. In addition, it allows for the use of higher learning rates, which can accelerate convergence during training.
+
+With the help of the ANN, the original PDE can now be solved in a data-driven approach, and knowledge of the original problem (i.e. the governing equations, weak forms etc) is no longer needed. This greatly simplifies the computation, with some sacrifice on the solution accuracy. 
+
+
+\vspace{1cm}
+\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#
+
+Add a ANN sample figure with input and output shape represented
+
+Model Description, discussions on layers and number of neurons, activation functions and maybe stopping criteria. 
+
+
+Final results for a sigmoid activation function with 500 training and validation samples:
+Mean error for U is: 0.398826; Mean Error for SIGMA is 0.862105
+Maximum error for U and SIGMA are: 0.771895, 0.999538
+
+Final results for a sigmoid activation function with 1000 training and validation samples: (mu1 and mu2 only)
+Mean error for U is: 0.147512; Mean Error for SIGMA is 0.252696
+Maximum error for U and SIGMA are: 0.582387, 0.605089
+
+Final results for a sigmoid activation function with 1000 training and validation samples: 
+Mean error for U is: 0.102683; Mean Error for SIGMA is 0.248321
+Maximum error for U and SIGMA are: 0.553261, 0.813254
+
+\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#\#
+
+\newpage
