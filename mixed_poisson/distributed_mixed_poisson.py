@@ -123,9 +123,9 @@ class PODReducedProblem:
         self._basis_functions_u = rbnicsx.backends.FunctionsList(Q)
         sigma, u = ufl.TrialFunction(V), ufl.TrialFunction(Q)
         v, q = ufl.TestFunction(V), ufl.TestFunction(Q)
-        # self._inner_product_sigma = inner(sigma, v) * dx + \
-            # inner(grad(sigma), grad(v)) * dx
-        self._inner_product_sigma = inner(sigma, v) * dx 
+        self._inner_product_sigma = inner(sigma, v) * dx + \
+            inner(div(sigma), div(v)) * dx
+        # self._inner_product_sigma = inner(sigma, v) * dx 
         self._inner_product_action_sigma = \
             rbnicsx.backends.bilinear_form_action(self._inner_product_sigma,
                                                   part="real")
@@ -141,8 +141,8 @@ class PODReducedProblem:
 
         self.input_scaling_range = [0., 1.]
         self.input_range = \
-            np.array([[None, None, None, None, None],
-                      [None, None, None, None, None]])
+            np.array([[None, None],
+                      [None, None]])
     
     def reconstruct_solution_sigma(self, reduced_solution):
         return self._basis_functions_sigma[:reduced_solution.size] * \
@@ -231,15 +231,11 @@ def write_file_sigma(problem, file_name, solution_sigma):
         file.write_mesh(problem.msh)
         file.write_function(sigma_h_plot)
 
-def generate_training_set(sample_size = [3, 3, 3, 3, 3]):
+def generate_training_set(sample_size = [10, 10]):
     # Generate input parameter matrix for MU, depending on sample_size
-    set_1 = np.linspace(5, 20, sample_size[0])
-    set_2 = np.linspace(10, 20, sample_size[1])
-    set_3 = np.linspace(10, 50, sample_size[2])
-    set_4 = np.linspace(0.3, 0.7, sample_size[3])
-    set_5 = np.linspace(0.3, 0.7, sample_size[4])
-    training_set = np.array(list(itertools.product(set_1,set_2, set_3,
-                                                        set_4, set_5)))
+    set_1 = np.linspace(2*np.pi, 2.5*np.pi, sample_size[0])
+    set_2 = np.linspace(12, 13, sample_size[1])
+    training_set = np.array(list(itertools.product(set_1,set_2)))
     return training_set
     
 def create_training_snapshots(training_set, problem_parametric):
@@ -267,7 +263,7 @@ def create_training_snapshots(training_set, problem_parametric):
 
 # reduced_problem = PODReducedProblem(problem_parametric)
 
-SAMPLE_SIZE = [2, 2, 2, 1, 1]
+SAMPLE_SIZE = [25, 25]
 num_snapshots = np.product(np.array(SAMPLE_SIZE))
 
 world_comm = MPI.COMM_WORLD
@@ -294,7 +290,7 @@ if world_comm.rank == 0:
 """
 
 
-sample_mu = [5,10,50,0.5,0.5]
+sample_mu = [2*np.pi, 12]
 problem_parametric = MixedPoissonSolver(world_comm)
 solution = problem_parametric.solve(sample_mu)
 solution_sigma, solution_u = solution.split()
@@ -315,20 +311,22 @@ world_comm.Barrier()
 if world_comm.rank == 0:
     print(u_dofs, sigma_dofs)
 
+start_time = MPI.Wtime()
 training_set_solution_sigma = np.zeros(shape=(num_snapshots, sigma_dofs))
 training_set_solution_u = np.zeros(shape=(num_snapshots, u_dofs))
-group0_procs = world_comm.group.Incl([0,1])
+group0_procs = world_comm.group.Incl([0,2])
 gpu_group0_comm = world_comm.Create_group(group0_procs)
-group1_procs = world_comm.group.Incl([2,3])
+group1_procs = world_comm.group.Incl([1,3])
 gpu_group1_comm = world_comm.Create_group(group1_procs)
 
 world_comm.Barrier()
 
 if gpu_group0_comm != MPI.COMM_NULL:
-    problem_parametric0 = MixedPoissonSolver(gpu_group0_comm)
+    problem_parametric = MixedPoissonSolver(gpu_group0_comm)
+    # problem_parametric = MixedPoissonSolver(gpu_group0_comm)
     indices_group0 = np.arange(0, num_snapshots, 2)
     for i in indices_group0:
-        solution = problem_parametric0.solve(training_set[i, :])
+        solution = problem_parametric.solve(training_set[i, :])
         solution_sigma, solution_u = solution.split()
         # print(len(solution_u.x.array), len(solution_sigma.x.array))
         solution_sigma = solution_sigma.collapse()
@@ -345,16 +343,17 @@ if gpu_group0_comm != MPI.COMM_NULL:
     #print("TRAINING SET SIG GROUP0:", training_set_solution_sigma)
 
 if gpu_group1_comm != MPI.COMM_NULL:
-    problem_parametric1 = MixedPoissonSolver(gpu_group1_comm)
+    problem_parametric = MixedPoissonSolver(gpu_group1_comm)
+    # problem_parametric = MixedPoissonSolver(gpu_group0_comm)
     indices_group1 = np.arange(1, num_snapshots, 2)
     for i in indices_group1:
-        solution = problem_parametric1.solve(training_set[i, :])
+        solution = problem_parametric.solve(training_set[i, :])
         solution_sigma, solution_u = solution.split()
         solution_sigma = solution_sigma.collapse()
         solution_u = solution_u.collapse()
         rstart_u, rend_u = solution_u.vector.getOwnershipRange()
         rstart_sigma, rend_sigma = solution_sigma.vector.getOwnershipRange()
-        print(f"Parameter {i}, My rank in comm1: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, lengh of this solution: {len(solution_u.x.array)}")
+        # print(f"Parameter {i}, My rank in comm1: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, lengh of this solution: {len(solution_u.x.array)}")
         training_set_solution_u[i, rstart_u:rend_u] = solution_u.vector[rstart_u:rend_u] 
         training_set_solution_sigma[i, rstart_sigma:rend_sigma] = solution_sigma.vector[rstart_sigma:rend_sigma] 
         #training_set_solution_u[i, rstart_u:rend_u] = solution_u.x.array[rstart_u:rend_u]
@@ -395,7 +394,7 @@ if gpu_group0_comm != MPI.COMM_NULL:
         snapshots_matrix_sigma.append(solution_empty_sigma)
         #print(f"Parameter {i}, My rank in comm0: {gpu_group0_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
               #lengh of this solution: {len(solution_empty_u.x.array)},  length of snapshot matrix: {len(snapshots_matrix_u)}")
-    print("GROUP0:",indices_group0, "Snapshot Matrix U:", snapshots_matrix_u[0].vector[rstart_u:rend_u])
+    # print("GROUP0:",indices_group0, "Snapshot Matrix U:", snapshots_matrix_u[0].vector[rstart_u:rend_u])
 
 if gpu_group1_comm != MPI.COMM_NULL:
     print("GROUP1:",indices_group1)
@@ -415,12 +414,14 @@ if gpu_group1_comm != MPI.COMM_NULL:
         snapshots_matrix_sigma.append(solution_empty_sigma)
         # print(f"Parameter {i}, My rank in comm0: {gpu_group1_comm.rank}, My world rank: {world_comm.rank}, rstart: {rstart_u}, rend: {rend_u}, \
               # lengh of this solution: {len(solution_empty_u.x.array)}, length of snapshot matrix: {len(snapshots_matrix_u)}")
-    print("GROUP1:",indices_group1, "Snapshot Matrix U:", snapshots_matrix_u[0].vector[rstart_u:rend_u]) 
-problem_parametric = MixedPoissonSolver(world_comm)
+    # print("GROUP1:",indices_group1, "Snapshot Matrix U:", snapshots_matrix_u[0].vector[rstart_u:rend_u]) 
+
 reduced_problem = PODReducedProblem(problem_parametric)
 Nmax = 30
 
 world_comm.Barrier()
+end_time = MPI.Wtime()
+print(f"Elapsed time of {world_comm.rank} with sample size 100 is: {end_time-start_time}")
 print(len(snapshots_matrix_u))
 world_comm.Barrier()
 if world_comm.rank == 0:
@@ -428,12 +429,12 @@ if world_comm.rank == 0:
 eigenvalues_u, modes_u, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_u,
                                     reduced_problem._inner_product_action_u,
-                                    N=Nmax, tol=1e-4)
+                                    N=Nmax, tol=1e-6)
 
 eigenvalues_sigma, modes_sigma, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_sigma,
                                     reduced_problem._inner_product_action_sigma,
-                                    N=Nmax, tol=1e-4)
+                                    N=Nmax, tol=1e-6)
 
 # modes_u._save("Saved_modes", "mode_u")
 # modes_u._save("Saved_modes", "mode_sigma")
@@ -462,10 +463,6 @@ def plotting_eigenvalues(eigen_u, eigen_sigma, num=50, fontsize=14):
 reduced_problem._basis_functions_u.extend(modes_u)
 reduced_problem._basis_functions_sigma.extend(modes_sigma)
 
-print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
-print("First 20 eigenvalues for u:", eigenvalues_u[:20])
-print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")       
-exit()
 if world_comm.rank == 0:
     print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
     print("First 20 eigenvalues for u:", eigenvalues_u[:20])
@@ -473,7 +470,6 @@ if world_comm.rank == 0:
     plotting_eigenvalues(eigenvalues_u, eigenvalues_sigma)
 
 exit()
-
 def calculate_error_u(problem, reduced_problem, original_solution, rb_solution):
     regenerated_solution = reduced_problem.reconstruct_solution_u(rb_solution)
     error = fem.Function(problem.V.sub(1).collapse()[0])
@@ -544,7 +540,7 @@ ann_output_set_u, ann_output_set_sigma, POD_errors_u, POD_errors_sigma, highfid_
 print(f"The mean error for U from POD on the inputs is {np.mean(POD_errors_u): 4f}, and the maximum error is {np.max(POD_errors_u): 4f}")
 print(f"The mean error for SIGMA from POD on the inputs is {np.mean(POD_errors_sigma): 4f}, and the maximum error is {np.max(POD_errors_sigma): 4f}")
 
-exit()
+
 #with open('saved_mesh50_576POD_1000ANN.pkl', 'wb') as f:
     #pickle.dump((ann_input_set, ann_output_set_sigma, ann_output_set_u), f)
 
