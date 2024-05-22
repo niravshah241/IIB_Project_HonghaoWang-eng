@@ -24,6 +24,8 @@ def create_model(input_shape, output_shape, hidden_layers_neurons, activation='r
     # hidden layers
     for neurons in hidden_layers_neurons:
         model.add(Dense(neurons, activation=activation))
+        model.add(tf.keras.layers.BatchNormalization(synchronized=True))
+
     # output layer
     model.add(Dense(output_shape, activation=activation))  # Assuming only one output neuron for regression
     return model
