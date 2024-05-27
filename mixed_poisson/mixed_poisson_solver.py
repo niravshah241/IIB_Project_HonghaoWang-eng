@@ -18,7 +18,7 @@ from ANN_model import MixedPoissonANNModel, create_model
 from engine import train, online_nn, error_analysis
 import tensorflow as tf
 import matplotlib.pyplot as plt
-import pickle
+import time
 
 print(dolfinx.__version__)
 
@@ -122,9 +122,8 @@ class PODReducedProblem:
         self._basis_functions_u = rbnicsx.backends.FunctionsList(Q)
         sigma, u = ufl.TrialFunction(V), ufl.TrialFunction(Q)
         v, q = ufl.TestFunction(V), ufl.TestFunction(Q)
-        # self._inner_product_sigma = inner(sigma, v) * dx + \
-            # inner(grad(sigma), grad(v)) * dx
-        self._inner_product_sigma = inner(sigma, v) * dx 
+        self._inner_product_sigma = inner(sigma, v) * dx + \
+            inner(div(sigma), div(v)) * dx
         self._inner_product_action_sigma = \
             rbnicsx.backends.bilinear_form_action(self._inner_product_sigma,
                                                   part="real")
@@ -133,15 +132,24 @@ class PODReducedProblem:
             rbnicsx.backends.bilinear_form_action(self._inner_product_u,
                                                   part="real")
 
-        self.output_scaling_range_sigma = [0., 1.]
+        self.output_scaling_range_sigma = [-1, 1.]
         self.output_range_sigma = [None, None]
-        self.output_scaling_range_u = [0., 1.]
+        self.output_scaling_range_u = [-1, 1.]
         self.output_range_u = [None, None]
 
-        self.input_scaling_range = [0., 1.]
+        self.input_scaling_range = [-1, 1.]
         self.input_range = \
-            np.array([[None, None, None, None, None],
-                      [None, None, None, None, None]])
+            np.array([[2.*np.pi, 12.],
+                      [10./4.*np.pi, 13.]])
+        """
+        self.input_range = \
+            np.array([[5, 10],
+                      [5, 10]])   
+
+        self.input_range = \
+            np.array([[5, 10, 50, 0.5, 0.5],
+                      [5, 10, 50, 0.5, 0.5]])
+        """     
     
     def reconstruct_solution_sigma(self, reduced_solution):
         return self._basis_functions_sigma[:reduced_solution.size] * \
@@ -158,7 +166,9 @@ class PODReducedProblem:
         return self._project_snapshot_u(solution, N)
 
     def _project_snapshot_sigma(self, solution, N):
+        ### This line can be replaced by an offline function?
         projected_snapshot_sigma = rbnicsx.online.create_vector(N)
+        # projected_snapshot_sigma = np.random.rand(N)
         A = rbnicsx.backends.\
             project_matrix(self._inner_product_action_sigma,
                            self._basis_functions_sigma[:N])
@@ -176,6 +186,7 @@ class PODReducedProblem:
 
     def _project_snapshot_u(self, solution, N):
         projected_snapshot_u = rbnicsx.online.create_vector(N)
+        # projected_snapshot_u = np.random.rand(N)
         A = rbnicsx.backends.\
             project_matrix(self._inner_product_action_u,
                            self._basis_functions_u[:N])
@@ -215,13 +226,15 @@ class PODReducedProblem:
         return self.compute_norm_sigma(sigma-q)/self.compute_norm_sigma(sigma)
 
 def write_file_u(problem, file_name, solution_u):
+    print("Writing file:",file_name)
     with io.XDMFFile(problem.msh.comm, file_name, "w") as file:
         file.write_mesh(problem.msh)
         file.write_function(solution_u)
 
 def write_file_sigma(problem, file_name, solution_sigma):
+    print("Writing file:",file_name)
     Sigma_plot_element = element("Lagrange", problem.msh.basix_cell(), problem.k, shape=(problem.msh.geometry.dim,))
-    Sigma_plot = fem.FunctionSpace(problem.msh, Sigma_plot_element)
+    Sigma_plot = fem.functionspace(problem.msh, Sigma_plot_element)
     sigma_h_plot = fem.Function(Sigma_plot)
     sigma_h_expr = fem.Expression(solution_sigma, Sigma_plot.element.interpolation_points())
     sigma_h_plot.interpolate(sigma_h_expr)
@@ -229,6 +242,36 @@ def write_file_sigma(problem, file_name, solution_sigma):
     with io.XDMFFile(problem.msh.comm, file_name, "w") as file:
         file.write_mesh(problem.msh)
         file.write_function(sigma_h_plot)
+
+"""
+### Test Solver
+solver = MixedPoissonSolver()
+mu_values_1 = [5.0, 10.0] 
+mu_values_2 = [5.0, 11.0]
+w_h_1 = solver.solve(mu_values_1)
+w_h_2 = solver.solve(mu_values_2)
+sigma_h_1, u_h_1 = w_h_1.split()
+sigma_h_2, u_h_2 = w_h_2.split()
+sigma_h_1 = sigma_h_1.collapse()
+u_h_1 = u_h_1.collapse()
+sigma_h_2 = sigma_h_2.collapse()
+u_h_2 = u_h_2.collapse()
+print(len(sigma_h_1.x.array))
+print(len(sigma_h_2.x.array))
+print(len(u_h_1.x.array))
+print(len(u_h_2.x.array))
+
+# If you are measuring error between ```u_h_1''' and ```u_h_2'''
+error_u = fem.Function(solver.V.sub(1).collapse()[0])
+error_u.x.array[:] = abs(u_h_1.x.array - u_h_2.x.array)
+
+# If you are measuring error between ```sigma_h_1''' and ```sigma_h_2'''
+error_sigma = fem.Function(solver.V.sub(0).collapse()[0])
+error_sigma.x.array[:] = abs(sigma_h_1.x.array - sigma_h_2.x.array)
+
+write_file_u(solver,"out_mixed_poisson/trial.xdmf", error_u)
+write_file_sigma(solver,"out_mixed_poisson/sigma_trial.xdmf", error_sigma)
+"""
 
 def generate_training_set(sample_size = [3, 3, 3, 3, 3]):
     # Generate input parameter matrix for MU, depending on sample_size
@@ -240,6 +283,26 @@ def generate_training_set(sample_size = [3, 3, 3, 3, 3]):
     training_set = np.array(list(itertools.product(set_1,set_2, set_3,
                                                         set_4, set_5)))
     return training_set
+
+### Random parametrisation for POD?
+
+def generate_training_set_2(sample_size = [10,10]):
+    # Generate input parameter matrix for MU, depending on sample_size
+    set_1 = np.linspace(2*np.pi, 2.5*np.pi, sample_size[0])
+    set_2 = np.linspace(12, 13, sample_size[1])
+    training_set = np.array(list(itertools.product(set_1,set_2)))
+    return training_set
+
+"""
+def generate_training_set_2(sample_size = [10,10]):
+    # Generate input parameter matrix for MU, depending on sample_size
+    set_1 = np.random.rand(sample_size[0]) * (10./4. - 2) * np.pi + 2. * np.pi
+    set_2 = np.random.rand(sample_size[1]) * (13. - 12.) + 12.
+    training_set = np.array(list(itertools.product(set_1,set_2)))
+    return training_set
+
+"""
+
     
 def create_training_snapshots(training_set, problem_parametric):
     print(rbnicsx.io.TextBox("POD offline phase begins", fill="="))
@@ -266,52 +329,66 @@ def create_training_snapshots(training_set, problem_parametric):
 
 problem_parametric = MixedPoissonSolver()
 reduced_problem = PODReducedProblem(problem_parametric)
-SAMPLE_SIZE = [4, 4, 4, 3, 3]
-training_set = generate_training_set(SAMPLE_SIZE)
-snapshots_matrix_sigma, snapshots_matrix_u = create_training_snapshots(training_set, problem_parametric)
-Nmax = 30
+SAMPLE_SIZE = [10, 10]
 
+# training_set = generate_training_set(SAMPLE_SIZE)
+start_time = time.time()
+training_set = generate_training_set_2(SAMPLE_SIZE)
+snapshots_matrix_sigma, snapshots_matrix_u = create_training_snapshots(training_set, problem_parametric)
+end_time = time.time()
+
+print("Time for generating 100 samples in serial is:", end_time-start_time)
+Nmax = 30
+start_time_u = time.time()
 print(rbnicsx.io.TextLine("Perform POD", fill="#"))
 eigenvalues_u, modes_u, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_u,
                                     reduced_problem._inner_product_action_u,
-                                    N=Nmax, tol=1e-4)
+                                    N=Nmax, tol=1e-6)
 
+end_time_u = time.time()
+
+start_time_sigma = time.time()
 eigenvalues_sigma, modes_sigma, _ = rbnicsx.backends.\
     proper_orthogonal_decomposition(snapshots_matrix_sigma,
                                     reduced_problem._inner_product_action_sigma,
-                                    N=Nmax, tol=1e-4)
+                                    N=Nmax, tol=1e-6)
+end_time_sigma = time.time()
 
-modes_u._save("Saved_modes", "mode_u")
-modes_u._save("Saved_modes", "mode_sigma")
 
 def plotting_eigenvalues(eigen_u, eigen_sigma, num=50, fontsize=14):
     
     top_eigen_u = eigen_u[:num]
     top_eigen_sigma = eigen_sigma[:num]
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-    
-    axes[0].plot(top_eigen_u, marker='o', linestyle='-')
-    axes[0].set_title(f'Top {num} Eigenvalues for u', fontsize=fontsize)
+    index = range(1, num + 1)
+    axes[0].plot(index, top_eigen_u, marker='o', linestyle='-')
+    axes[0].set_title(f'First {num} Eigenvalues for $u$', fontsize=fontsize)
     axes[0].set_xlabel('Index', fontsize=fontsize)
     axes[0].set_ylabel('Eigenvalue', fontsize=fontsize)
     axes[0].tick_params(axis='both', which='major', labelsize=fontsize)
     
-    axes[1].plot(top_eigen_sigma, marker='o', linestyle='-')
-    axes[1].set_title(f'Top {num} Eigenvalues for sigma', fontsize=fontsize)
+    axes[1].plot(index, top_eigen_sigma, marker='o', linestyle='-')
+    axes[1].set_title(f'First {num} Eigenvalues for $\sigma$', fontsize=fontsize)
     axes[1].set_xlabel('Index', fontsize=fontsize)
     axes[1].set_ylabel('Eigenvalue', fontsize=fontsize)
     axes[1].tick_params(axis='both', which='major', labelsize=fontsize)
+    
+    # Set y-axis to log scale
+    axes[0].set_yscale('log')
+    axes[1].set_yscale('log')
     
     plt.tight_layout()
     plt.show()
 
 reduced_problem._basis_functions_u.extend(modes_u)
 reduced_problem._basis_functions_sigma.extend(modes_sigma)
-print("First 30 eigenvalues for sigma:", eigenvalues_sigma[:20])
-print("First 30 eigenvalues for u:", eigenvalues_u[:20])
-print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}")       
-# plotting_eigenvalues(eigenvalues_u, eigenvalues_sigma)
+print("First 20 eigenvalues for sigma:", eigenvalues_sigma[:20])
+print("First 20 eigenvalues for u:", eigenvalues_u[:20])
+print(f"Active number of modes for u and sigma: {len(modes_u)}, {len(modes_sigma)}") 
+print(f"Elapsed time for u is {(end_time_u - start_time_u): 4f}")   
+print(f"Elapsed time for sigma is {(end_time_sigma - start_time_sigma): 4f}")      
+plotting_eigenvalues(eigenvalues_u, eigenvalues_sigma)
 
 def calculate_error_u(problem, reduced_problem, original_solution, rb_solution):
     regenerated_solution = reduced_problem.reconstruct_solution_u(rb_solution)
@@ -328,9 +405,15 @@ def calculate_error_sigma(problem, reduced_problem, original_solution, rb_soluti
     return norm_error
 
 def generate_ann_input_set(num_samples = 32):
-    limits = np.array([[5, 20], [10, 20],
-                       [10, 50], [0.3, 0.7], 
-                       [0.3, 0.7]])
+    limits = np.array([[5, 20], [5, 20],
+                       [10, 50], [0.2, 0.8], 
+                       [0.2, 0.8]])
+    sampling = LHS(xlimits=limits)
+    x = sampling(num_samples)
+    return x
+
+def generate_ann_input_set_2(num_samples = 32):
+    limits = np.array([[2.*np.pi, 10./4.*np.pi], [12., 13.]])
     sampling = LHS(xlimits=limits)
     x = sampling(num_samples)
     return x
@@ -359,15 +442,16 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
         output_set_sigma[i, :] = rb_solution_sigma.array  
         output_set_u[i, :] = rb_solution_u.array
         original_solutions[tuple(mu)] = [solution_u, solution_sigma]
-        """
-        if i % 5 == 0:
+        
+        if i % 15 == 0:
             regenerated_solution_u = reduced_problem.reconstruct_solution_u(rb_solution_u)
             regenerated_solution_sigma = reduced_problem.reconstruct_solution_sigma(rb_solution_sigma)
-            write_file_u(problem_parametric, f"new_inner_mesh64_1024samples/OldU{i}.xdmf", solution_u)
-            write_file_u(problem_parametric, f"new_inner_mesh64_1024samples/NewU{i}.xdmf", regenerated_solution_u)
-            write_file_sigma(problem_parametric, f"new_inner_mesh64_1024samples/OldSIGMA{i}.xdmf", solution_sigma)
-            write_file_sigma(problem_parametric, f"new_inner_mesh64_1024samples/NewSIGMA{i}.xdmf", regenerated_solution_sigma)
-        """
+            write_file_u(problem_parametric, f"test/FEMU{i}.xdmf", solution_u)
+            write_file_u(problem_parametric, f"test/PODU{i}.xdmf", regenerated_solution_u)
+            write_file_sigma(problem_parametric, f"test/FEMSIGMA{i}.xdmf", solution_sigma)
+            write_file_sigma(problem_parametric, f"test/PODSIGMA{i}.xdmf", regenerated_solution_sigma)
+        
+
         # u_error = reduced_problem.norm_error_u(solution_u, rb_solution_u)
         # sigma_error = reduced_problem.norm_error_sigma(solution_sigma, rb_solution_sigma)
         u_error = calculate_error_u(problem_parametric, reduced_problem, solution_u, rb_solution_u)
@@ -377,16 +461,16 @@ def generate_ann_output_set(problem_parametric, reduced_problem, ann_training_se
 
     return output_set_u, output_set_sigma, errors_u, errors_sigma, original_solutions
 
-ann_input_set = generate_ann_input_set(1000)
+
+INPUT_SHAPE = 2
+NUM_ANN_SAMPLES = 32
+ann_input_set = generate_ann_input_set_2(NUM_ANN_SAMPLES)
+# ann_input_set = generate_ann_input_set(NUM_ANN_SAMPLES)
+
 ann_output_set_u, ann_output_set_sigma, POD_errors_u, POD_errors_sigma, highfid_solutions = \
                             generate_ann_output_set(problem_parametric, reduced_problem, ann_input_set)
 print(f"The mean error for U from POD on the inputs is {np.mean(POD_errors_u): 4f}, and the maximum error is {np.max(POD_errors_u): 4f}")
 print(f"The mean error for SIGMA from POD on the inputs is {np.mean(POD_errors_sigma): 4f}, and the maximum error is {np.max(POD_errors_sigma): 4f}")
-
-
-#with open('saved_mesh50_576POD_1000ANN.pkl', 'wb') as f:
-    #pickle.dump((ann_input_set, ann_output_set_sigma, ann_output_set_u), f)
-
 # Update the input and output ranges by looking for the max and min values
 # Outputs range can be updated by directly look for the single max and min
 # Inputs range is updated using specific methods
@@ -394,8 +478,8 @@ reduced_problem.output_range_u[0] = np.min(ann_output_set_u)
 reduced_problem.output_range_u[1] = np.max(ann_output_set_u)
 reduced_problem.output_range_sigma[0] = np.min(ann_output_set_sigma)
 reduced_problem.output_range_sigma[1] = np.max(ann_output_set_sigma)
-
-reduced_problem.update_input_range(training_set)
+exit()
+# reduced_problem.update_input_range(ann_input_set)
 
 print(ann_output_set_u.shape)
 
@@ -426,6 +510,37 @@ train_dataloader_u, test_dataloader_u = create_Dataloader(scaled_inputs_u, scale
 train_dataloader_sigma, test_dataloader_sigma = create_Dataloader(scaled_inputs_sigma, scaled_outputs_sigma, 
                                                                   train_batch_size=BATCH_SIZE, test_batch_size=1)
 
+def plot_loss_over_epochs(train_results, name, fontsize=16, labelsize = 14):
+    train_loss = train_results['train_loss']
+    test_loss = train_results['test_loss']
+    epochs = range(1, len(train_loss) + 1)
+
+    plt.plot(epochs, train_loss, label='Train Loss')
+    plt.plot(epochs, test_loss, label='Test Loss')
+    plt.title(name, fontsize=fontsize)
+    plt.xlabel('Epochs', fontsize=fontsize)
+    plt.ylabel('Loss', fontsize=fontsize)
+    plt.xticks(fontsize=labelsize)
+    plt.yticks(fontsize=labelsize)
+    plt.legend(fontsize=labelsize)
+    plt.show()
+
+def plot_loss_over_epochs(train_results, name, fontsize=16, labelsize=14):
+    train_loss = train_results['train_loss']
+    test_loss = train_results['test_loss']
+    epochs = range(1, len(train_loss) + 1)
+
+    plt.plot(epochs, train_loss, label='Train Loss')
+    plt.plot(epochs, test_loss, label='Validation Loss')
+    plt.title(name, fontsize=fontsize)
+    plt.yscale('log')  # Set the y-axis to a logarithmic scale
+    plt.xlabel('Epochs', fontsize=fontsize)
+    plt.ylabel('Loss', fontsize=fontsize)
+    plt.xticks(fontsize=labelsize)
+    plt.yticks(fontsize=labelsize)
+    plt.legend(fontsize=labelsize)
+    plt.show()
+
 # Visualise the shape of example batch in the dataloaders
 for X, y in train_dataloader_sigma:
     print(f"Shape of SIGMA training set input: {X.shape}")
@@ -442,67 +557,78 @@ for X, y in train_dataloader_u:
     break
 
 ### TRAINING FOR MODEL U
-model_u = create_model(input_shape = 5, output_shape = len(reduced_problem._basis_functions_u), 
-                           hidden_layers_neurons = [25,25,25], activation='sigmoid')
-loss_object = tf.keras.losses.MeanAbsoluteError()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
+neurons_u = [25,25]
+model_u = create_model(input_shape = INPUT_SHAPE, output_shape = len(reduced_problem._basis_functions_u), 
+                           hidden_layers_neurons = neurons_u, activation='tanh')
 
-NUM_EPOCH = 200
-result_dict = train(model_u,
+lr = 5.e-4
+# loss_object = tf.keras.losses.MeanAbsoluteError()
+loss_object = tf.keras.losses.MeanSquaredError()
+optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+
+NUM_EPOCH = 1000
+
+result_dict_u = train(model_u,
                     train_dataloader=train_dataloader_u,
                     test_dataloader=test_dataloader_u,
                     optimizer=optimizer,
                     loss_fn=loss_object,
                     epochs=NUM_EPOCH,
-                    device="cpu")
+                    device="cpu",
+                    early_stopping = 3)
 
 ### TRAINING FOR MODEL SIGMA
-model_sigma = create_model(input_shape = 5, output_shape = len(reduced_problem._basis_functions_sigma), 
-                           hidden_layers_neurons = [25,25,25], activation='sigmoid')
-loss_object = tf.keras.losses.MeanAbsoluteError()
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
+neurons_sigma = [15,15]
+model_sigma = create_model(input_shape = INPUT_SHAPE, output_shape = len(reduced_problem._basis_functions_sigma), 
+                           hidden_layers_neurons = neurons_sigma, activation='tanh')
+# loss_object = tf.keras.losses.MeanAbsoluteError()
+loss_object = tf.keras.losses.MeanSquaredError()
+optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
-result_dict = train(model_sigma,
-                    train_dataloader=train_dataloader_sigma,
-                    test_dataloader=test_dataloader_sigma,
-                    optimizer=optimizer,
-                    loss_fn=loss_object,
-                    epochs=NUM_EPOCH,
-                    device="cpu")
+NUM_EPOCH = 1000
+result_dict_sigma = train(model_sigma,
+                        train_dataloader=train_dataloader_sigma,
+                        test_dataloader=test_dataloader_sigma,
+                        optimizer=optimizer,
+                        loss_fn=loss_object,
+                        epochs=NUM_EPOCH,
+                        device="cpu",
+                        early_stopping = 3)
 
-def plot_loss_over_epochs(train_results, fontsize=16, labelsize = 14):
-    train_loss = train_results['train_loss']
-    test_loss = train_results['test_loss']
-    epochs = range(1, len(train_loss) + 1)
+name_u = f"Losses for $u$, lr={lr}, ANN Sturcture: {neurons_u}"
+plot_loss_over_epochs(result_dict_u, name_u)
 
-    plt.plot(epochs, train_loss, label='Train Loss')
-    plt.plot(epochs, test_loss, label='Test Loss')
-    plt.title('Train and Test Loss Over Epochs', fontsize=fontsize)
-    plt.xlabel('Epochs', fontsize=fontsize)
-    plt.ylabel('Loss', fontsize=fontsize)
-    plt.xticks(fontsize=labelsize)
-    plt.yticks(fontsize=labelsize)
-    plt.legend(fontsize=labelsize)
-    plt.show()
+name_sigma = f"Losses for $\sigma$, lr={lr}, ANN Sturcture: {neurons_sigma}"
+plot_loss_over_epochs(result_dict_sigma, name_sigma)
 
-plot_loss_over_epochs(result_dict)
+# error_analysis_mu_set = generate_training_set(sample_size = [2,2,2,2,2])
+
+# loaded_model = tf.keras.models.load_model('sigma_model')
 
 print("\n")
 print("Generating error analysis (only input/parameters) dataset")
 print("\n")
-error_analysis_set = generate_ann_input_set(50)
+# error_analysis_set = generate_ann_input_set(100)
+error_analysis_set = generate_ann_input_set_2(50)
 error_numpy_u = np.zeros(error_analysis_set.shape[0])
 error_numpy_sigma = np.zeros(error_analysis_set.shape[0])
+print(error_analysis_set.shape[0])
 ann_solutions_u = [None]*error_analysis_set.shape[0]
 ann_solutions_sigma = [None]*error_analysis_set.shape[0]
+offline_time = np.zeros(error_analysis_set.shape[0])
+online_time = np.zeros(error_analysis_set.shape[0])
 for i in range(error_analysis_set.shape[0]):
     print(f"Error analysis parameter number {i+1} of ")
     print(f"{error_analysis_set.shape[0]}: {error_analysis_set[i,:]}")
+    fem_start = time.time()
     w_h = problem_parametric.solve(error_analysis_set[i, :])
     solution_sigma, solution_u = w_h.split()
     fem_solution_sigma = solution_sigma.collapse()
     fem_solution_u = solution_u.collapse()
-    error_numpy_u[i], ann_solutions_u[i] = error_analysis(reduced_problem, problem_parametric,
+    fem_end = time.time()
+    fem_elapsed_time = fem_end - fem_start
+    offline_time[i] = fem_elapsed_time
+    error_numpy_u[i], ann_solutions_u[i], online_time_u = error_analysis(reduced_problem, problem_parametric,
                                                         error_analysis_set[i, :], model_u,
                                                         len(reduced_problem._basis_functions_u), 
                                                         online_nn, fem_solution_u,
@@ -513,7 +639,7 @@ for i in range(error_analysis_set.shape[0]):
                                                         input_range=reduced_problem.input_range,
                                                         output_range=reduced_problem.output_range_u)
     
-    error_numpy_sigma[i], ann_solutions_sigma[i] = error_analysis(reduced_problem, problem_parametric, 
+    error_numpy_sigma[i], ann_solutions_sigma[i],  online_time_sigma = error_analysis(reduced_problem, problem_parametric, 
                                                                 error_analysis_set[i, :], model_sigma,
                                                                 len(reduced_problem._basis_functions_sigma), 
                                                                 online_nn, fem_solution_sigma,
@@ -523,9 +649,10 @@ for i in range(error_analysis_set.shape[0]):
                                                                 output_scaling_range=reduced_problem.output_scaling_range_sigma, 
                                                                 input_range=reduced_problem.input_range,
                                                                 output_range=reduced_problem.output_range_sigma)
-    
     print(f"Error for U: {error_numpy_u[i]}")
     print(f"Error for SIGMA: {error_numpy_sigma[i]}")
+    total_online_time = online_time_u + online_time_sigma
+    online_time[i] = total_online_time
 
     ### Plotting FEM, POD_reconsturcted and ANN solutions for comparison
     if i % 20 == 0:
@@ -535,13 +662,21 @@ for i in range(error_analysis_set.shape[0]):
         rb_solution_u = reduced_problem.project_snapshot_u(fem_solution_u, rb_size_u)
         regenerated_solution_u = reduced_problem.reconstruct_solution_u(rb_solution_u)
         regenerated_solution_sigma = reduced_problem.reconstruct_solution_sigma(rb_solution_sigma)
-        write_file_u(problem_parametric, f"Solutions_Comparison/FEM_U{i}.xdmf", fem_solution_u)
-        write_file_u(problem_parametric, f"Solutions_Comparison/POD_U{i}.xdmf", regenerated_solution_u)
-        write_file_u(problem_parametric, f"Solutions_Comparison/ANN_U{i}.xdmf", ann_solutions_u[i])
-        write_file_sigma(problem_parametric, f"Solutions_Comparison/FEM_SIGMA{i}.xdmf", fem_solution_sigma)
-        write_file_sigma(problem_parametric, f"Solutions_Comparison/POD_SIGMA{i}.xdmf", regenerated_solution_sigma)
-        write_file_sigma(problem_parametric, f"Solutions_Comparison/ANN_SIGMA{i}.xdmf", ann_solutions_sigma[i])
+        error_u = fem.Function(problem_parametric.V.sub(1).collapse()[0])
+        error_u.x.array[:] = regenerated_solution_u.x.array - fem_solution_u.x.array
+        error_sigma = fem.Function(problem_parametric.V.sub(0).collapse()[0])
+        error_sigma.x.array[:] = regenerated_solution_sigma.x.array - fem_solution_sigma.x.array
+        write_file_u(problem_parametric, f"Solutions_Comparison_Final/FEM_U{i}.xdmf", fem_solution_u)
+        write_file_u(problem_parametric, f"Solutions_Comparison_Final/POD_U{i}.xdmf", regenerated_solution_u)
+        write_file_u(problem_parametric, f"Solutions_Comparison_Final/ANN_U{i}_error={error_numpy_u[i]}.xdmf", ann_solutions_u[i])
+        write_file_u(problem_parametric, f"Solutions_Comparison_Final/Error_U{i}_error={error_numpy_u[i]}.xdmf", error_u)
+        write_file_sigma(problem_parametric, f"Solutions_Comparison_Final/FEM_SIGMA{i}.xdmf", fem_solution_sigma)
+        write_file_sigma(problem_parametric, f"Solutions_Comparison_Final/POD_SIGMA{i}.xdmf", regenerated_solution_sigma)
+        write_file_sigma(problem_parametric, f"Solutions_Comparison_Final/ANN_SIGMA{i}_error={error_numpy_sigma[i]}.xdmf", ann_solutions_sigma[i])
+        write_file_sigma(problem_parametric, f"Solutions_Comparison_Final/Error_SIGMA{i}_error={error_numpy_sigma[i]}.xdmf", error_sigma)
 
-print("Final results for a sigmoid activation functio with 1000 training and validation samples:")
+print(f"Final results for a tanh activation function with {NUM_ANN_SAMPLES} training and validation samples:")
+print(f"Learing rate = {lr}, ANN structure sigma:{neurons_sigma}, u: {neurons_u}")
 print(f"Mean error for U is: {np.mean(error_numpy_u):4f}; Mean Error for SIGMA is {np.mean(error_numpy_sigma):4f}")
 print(f"Maximum error for U and SIGMA are: {np.max(error_numpy_u):4f}, {np.max(error_numpy_sigma):4f}")
+print(f"Mean offline and online time is: {np.max(offline_time):4f}, {np.max(online_time):4f}")
