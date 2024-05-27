@@ -3,6 +3,7 @@ from tqdm.auto import tqdm
 import tensorflow as tf
 import rbnicsx
 from tensorflow.keras.callbacks import EarlyStopping
+import time 
 
 def train_step(model: tf.keras.Model,
                dataloader: tf.data.Dataset,
@@ -43,13 +44,12 @@ def train_step(model: tf.keras.Model,
 
     train_loss = train_loss_metric.result().numpy()
     # train_acc = train_acc_metric.result().numpy()
-    train_loss_metric.reset_states()
+    train_loss_metric.reset_state()
     # train_acc_metric.reset_states()
 
     #return train_loss, train_acc
     return train_loss
 
-### TODO: Name it validate step
 def test_step(model: tf.keras.Model,
               dataloader: tf.data.Dataset,
               loss_fn: tf.keras.losses.Loss,
@@ -81,7 +81,7 @@ def test_step(model: tf.keras.Model,
 
     test_loss = test_loss_metric.result().numpy()
     # test_acc = test_acc_metric.result().numpy()
-    test_loss_metric.reset_states()
+    test_loss_metric.reset_state()
     # test_acc_metric.reset_states()
 
     # return test_loss, test_acc
@@ -94,7 +94,7 @@ def train(model: tf.keras.Model,
           loss_fn: tf.keras.losses.Loss,
           epochs: int,
           device: str,
-          early_stopping = 5) -> Dict[str, List[float]]:
+          early_stopping = 3) -> Dict[str, List[float]]:
     """Trains and tests a TensorFlow model.
 
     Args:
@@ -199,7 +199,6 @@ def online_nn(reduced_problem, problem, online_mu, model, rb_size,
     solution_reduced.array = pred
     return solution_reduced
 
-### TOASK: Why the fem solutiuon do not need collapse
 def error_analysis(reduced_problem, problem, error_analysis_mu, model,
                    rb_size, online_nn, fem_solution, norm_error=None,
                    reconstruct_solution=None, input_scaling_range=None,
@@ -233,6 +232,7 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
         error: float, Error computed with norm_error between FEM
             and RB solution
     '''
+    start_time = time.time()
     ann_prediction = online_nn(reduced_problem, problem, [error_analysis_mu],
                                model, rb_size, input_scaling_range,
                                output_scaling_range, input_range,
@@ -243,6 +243,8 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
     else:
         ann_reconstructed_solution = reconstruct_solution(ann_prediction)
 
+    end_time = time.time()
+    elpased_time = end_time - start_time
     """
     fem_solution = problem.solve(error_analysis_mu)
     if type(fem_solution) == tuple:
@@ -256,4 +258,4 @@ def error_analysis(reduced_problem, problem, error_analysis_mu, model,
                                            ann_reconstructed_solution)
     else:
         error = norm_error(fem_solution, ann_reconstructed_solution)
-    return error, ann_reconstructed_solution
+    return error, ann_reconstructed_solution, elpased_time
