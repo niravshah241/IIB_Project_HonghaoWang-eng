@@ -48,11 +48,7 @@ class CustomDataset(tf.keras.utils.Sequence):
         label = self.output_set[idx]
         return self.transform(input_data), self.target_transform(label)
 
-    ### TOASK: what if the parameter only takes a single value and shares the same max and min? 
     def input_transform(self, input_data):
-        #print("#"*80)
-        #print(self.input_range)
-        #print(self.input_scaling_range)
         input_data_scaled = (self.input_scaling_range[1] - self.input_scaling_range[0]) * \
                             (input_data - self.input_range[0]) / \
                             (self.input_range[1] - self.input_range[0]) + \
@@ -91,8 +87,8 @@ def create_Dataloader(input_dataset, output_dataset, batch_size, shuffling = 100
     return dataloader
 """
 
-def create_Dataloader(input_dataset, output_dataset, batch_size = 32, 
-                      train_percentage = 0.8, shuffling = 100):
+def create_Dataloader(input_dataset, output_dataset, train_batch_size = 32, 
+                      test_batch_size = 32, train_percentage = 0.8, shuffling = 100):
     print("#"*80)
     print("Creating training and testing dataloaders")
     train_size = int(len(input_dataset) * train_percentage)
@@ -102,9 +98,8 @@ def create_Dataloader(input_dataset, output_dataset, batch_size = 32,
 
     # Convert into numpy before slicing, tensors cannot be directly sliced
     ### TOASK: maybe there is a faster way for implementation?
-    ## TODO .numpy().copy(), otherwise passing by reference
-    input_dataset_numpy = input_dataset.numpy() 
-    output_dataset_numpy = output_dataset.numpy()
+    input_dataset_numpy = input_dataset.numpy().copy()
+    output_dataset_numpy = output_dataset.numpy().copy()
 
     # Split the datasets into training and testing datasets
     train_input = Dataset.from_tensor_slices(input_dataset_numpy[train_indices])
@@ -115,8 +110,8 @@ def create_Dataloader(input_dataset, output_dataset, batch_size = 32,
     # Create TensorFlow datasets for training and testing
     train_dataset = Dataset.zip((train_input, train_output))
     test_dataset = Dataset.zip((test_input, test_output))
-    train_dataloader = train_dataset.shuffle(shuffling).batch(batch_size)
-    test_dataloader = test_dataset.shuffle(shuffling).batch(batch_size)
+    train_dataloader = train_dataset.shuffle(shuffling).batch(train_batch_size)
+    test_dataloader = test_dataset.shuffle(shuffling).batch(test_batch_size)
     print("Train and test Dataloaders have been successfully created")
     return train_dataloader, test_dataloader
 
@@ -189,8 +184,10 @@ if __name__ == "__main__":
 
     ### TEST dataloader function for tensorflow
     BATCH_SIZE = 16
-    train_dataloader, test_dataloader = create_Dataloader(scaled_inputs, scaled_outputs, batch_size=BATCH_SIZE)
+    train_dataloader, test_dataloader = create_Dataloader(scaled_inputs, scaled_outputs, 
+                                                          train_batch_size=BATCH_SIZE, test_batch_size=1)
 
+    print(f"length of train and test dataloaders: {len(train_dataloader)}, {len(test_dataloader)}")
     for X, y in train_dataloader:
         print(f"Shape of training set: {X.shape}")
         print(f"X dtype: {X.dtype}")

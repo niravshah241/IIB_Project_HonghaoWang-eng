@@ -20,7 +20,7 @@ def create_model(input_shape, output_shape, hidden_layers_neurons, activation='r
     """
 
     model = tf.keras.Sequential()
-    model.add(tf.keras.layers.InputLayer(input_shape=input_shape))
+    model.add(tf.keras.layers.InputLayer(input_shape=(input_shape, )))
     # hidden layers
     for neurons in hidden_layers_neurons:
         model.add(Dense(neurons, activation=activation))
