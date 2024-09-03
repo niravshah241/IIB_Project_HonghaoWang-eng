@@ -13,10 +13,12 @@ import rbnicsx.io
 import rbnicsx.online
 import itertools
 from smt.sampling_methods import LHS
+'''
 from customed_dataset import CustomDataset, create_Dataloader
 from ANN_model import MixedPoissonANNModel, create_model
 from engine import train, online_nn, error_analysis
 import tensorflow as tf
+'''
 import matplotlib.pyplot as plt
 import time
 
@@ -26,7 +28,7 @@ class MixedPoissonSolver:
     def __init__(self):
         self.comm = MPI.COMM_WORLD
         ### TODO: Change mesh
-        self.msh = mesh.create_unit_square(self.comm, 50, 50, mesh.CellType.quadrilateral)
+        self.msh = mesh.create_unit_square(self.comm, 500, 500, mesh.CellType.quadrilateral)
         self.MU = [fem.Constant(self.msh, PETSc.ScalarType(5.)),
                     fem.Constant(self.msh, PETSc.ScalarType(10.)),
                     fem.Constant(self.msh, PETSc.ScalarType(1./0.02)),
@@ -36,7 +38,7 @@ class MixedPoissonSolver:
         self.Q_el = element("BDMCF", self.msh.basix_cell(), self.k)
         self.P_el = element("DG", self.msh.basix_cell(), self.k - 1)
         self.V_el = mixed_element([self.Q_el, self.P_el])
-        self.V = fem.functionspace(self.msh, self.V_el)
+        self.V = fem.FunctionSpace(self.msh, self.V_el)
                 
         # Define UFL variables and forms
         (self.sigma, self.u) = TrialFunctions(self.V)
@@ -100,7 +102,7 @@ class MixedPoissonSolver:
 
         ### For mumps solver_type: https://petsc.org/main/manualpages/Mat/MATSOLVERMUMPS/
         problem = LinearProblem(self.a, self.L, bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu",
-                                                                        "pc_factor_mat_solver_type": "superlu"})
+                                                                        "pc_factor_mat_solver_type": "mumps"})
         
         try:
             w_h = problem.solve()
@@ -234,7 +236,7 @@ def write_file_u(problem, file_name, solution_u):
 def write_file_sigma(problem, file_name, solution_sigma):
     print("Writing file:",file_name)
     Sigma_plot_element = element("Lagrange", problem.msh.basix_cell(), problem.k, shape=(problem.msh.geometry.dim,))
-    Sigma_plot = fem.functionspace(problem.msh, Sigma_plot_element)
+    Sigma_plot = fem.FunctionSpace(problem.msh, Sigma_plot_element)
     sigma_h_plot = fem.Function(Sigma_plot)
     sigma_h_expr = fem.Expression(solution_sigma, Sigma_plot.element.interpolation_points())
     sigma_h_plot.interpolate(sigma_h_expr)
