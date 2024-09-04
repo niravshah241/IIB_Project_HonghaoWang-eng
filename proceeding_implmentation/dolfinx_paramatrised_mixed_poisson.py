@@ -25,8 +25,8 @@ with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mesh_data/mesh.xdmf", "w") as mesh_fil
     mesh_file_xdmf.write_meshtags(boundaries, mesh.geometry)
 
 # Set parameter value
-mu_para = [dolfinx.fem.Constant(mesh, PETSc.ScalarType(2.37 * np.pi)),
-           dolfinx.fem.Constant(mesh, PETSc.ScalarType(12.23))]
+mu_para = [dolfinx.fem.Constant(mesh, PETSc.ScalarType(2.26 * np.pi)),
+           dolfinx.fem.Constant(mesh, PETSc.ScalarType(12.14))]
 
 # Define functions spaces, trial and test functions
 pol_degree = 1
@@ -73,6 +73,7 @@ L = - ufl.inner(f, v) * dx
 problem = LinearProblem(a, L, bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu",
                                                       "pc_factor_mat_solver_type": "mumps"})
 w_h = problem.solve()
+w_h.x.scatter_forward()
 sigma_h, u_h = w_h.split()
 sigma_h = sigma_h.collapse()
 u_h = u_h.collapse()
@@ -106,7 +107,11 @@ ksp.getPC().setType("lu")
 ksp.getPC().setFactorSolverType("mumps")
 ksp.setFromOptions()
 w_h2 = dolfinx.fem.Function(V)
+w_h2.x.scatter_forward()
 ksp.solve(L, w_h2.vector)
+ksp.destroy()
+A.destroy()
+L.destroy()
 
 sigma_h2, u_h2 = w_h2.split()
 sigma_h2 = sigma_h2.collapse()
@@ -122,15 +127,60 @@ with dolfinx.io.XDMFFile(mesh.comm, "out_mixed_poisson/u2.xdmf",
     u_solution_file.write_mesh(mesh)
     u_solution_file.write_function(u_h2)
 
-error_u = mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(u_h - u_h2, u_h - u_h2) * dx)) , op=MPI.SUM)
+error_u = \
+    mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                        (dolfinx.fem.form(ufl.inner(u_h - u_h2, u_h - u_h2) * dx)),
+                        op=MPI.SUM)
 
 error_sigma = \
-    mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(sigma_h - sigma_h2, sigma_h - sigma_h2) * dx +
-                                                                     ufl.inner(ufl.div(sigma_h - sigma_h2), ufl.div(sigma_h - sigma_h2)) * dx)), op=MPI.SUM)
+    mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                        (dolfinx.fem.form(ufl.inner
+                                          (sigma_h - sigma_h2,
+                                           sigma_h - sigma_h2) * dx +
+                                          ufl.inner
+                                          (ufl.div(sigma_h - sigma_h2),
+                                           ufl.div(sigma_h - sigma_h2)) * dx)),
+                        op=MPI.SUM)
 
 print(f"Error u: {error_u}, Error sigma: {error_sigma}")
 
 print(u_h.x.array)
 print(sigma_h.x.array)
+
 print(u_h2.x.array)
 print(sigma_h2.x.array)
+
+norm_u = \
+    mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                        (dolfinx.fem.form(ufl.inner(u_h, u_h) * dx)),
+                        op=MPI.SUM)
+
+norm_sigma = \
+    mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                        (dolfinx.fem.form(ufl.inner
+                                          (sigma_h,
+                                           sigma_h) * dx +
+                                          ufl.inner
+                                          (ufl.div(sigma_h),
+                                           ufl.div(sigma_h)) * dx)),
+                        op=MPI.SUM)
+
+norm_u2 = \
+    mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                        (dolfinx.fem.form(ufl.inner(u_h2, u_h2) * dx)),
+                        op=MPI.SUM)
+
+norm_sigma2 = \
+    mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                        (dolfinx.fem.form(ufl.inner
+                                          (sigma_h2,
+                                           sigma_h2) * dx +
+                                          ufl.inner
+                                          (ufl.div(sigma_h2),
+                                           ufl.div(sigma_h2)) * dx)),
+                        op=MPI.SUM)
+
+print(norm_u)
+print(norm_sigma)
+print(norm_u2)
+print(norm_sigma2)
