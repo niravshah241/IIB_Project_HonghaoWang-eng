@@ -414,6 +414,8 @@ plt.tight_layout()
 plt.savefig("eigenvalues_sigma.png")
 # plt.show()
 
+exit()
+
 # POD Ends ###
 
 sigma_fem_solution_online_mu, u_fem_solution_online_mu = problem_parametric.solve(online_mu)
@@ -538,7 +540,7 @@ load_model(model_sigma, path_sigma)
 training_loss_sigma = list()
 validation_loss_sigma = list()
 
-max_epochs_sigma = 50
+max_epochs_sigma = 1000
 min_validation_loss_sigma = None
 start_epoch_sigma = 0
 checkpoint_path_sigma = "checkpoint_sigma"
@@ -585,7 +587,7 @@ load_model(model_u, path_u)
 training_loss_u = list()
 validation_loss_u = list()
 
-max_epochs_u = 50
+max_epochs_u = 1000
 min_validation_loss_u = None
 start_epoch_u = 0
 checkpoint_path_u = "checkpoint_u"
