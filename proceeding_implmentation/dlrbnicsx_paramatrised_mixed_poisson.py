@@ -294,7 +294,7 @@ print(norm_u2)
 print(norm_sigma2)
 
 # POD Starts ###
-def generate_training_set(samples=[4, 3]):
+def generate_training_set(samples=[10, 10]):
     training_set_0 = np.linspace(2. * np.pi, 2.5 * np.pi, samples[0])
     training_set_1 = np.linspace(12., 13., samples[1])
     training_set = np.array(list(itertools.product(training_set_0,
