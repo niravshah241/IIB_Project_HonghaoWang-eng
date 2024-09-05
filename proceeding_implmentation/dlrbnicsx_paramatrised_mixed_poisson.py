@@ -6,6 +6,7 @@ import abc
 import itertools
 import matplotlib.pyplot as plt
 import os
+from smt.sampling_methods import LHS
 
 import ufl
 import basix
