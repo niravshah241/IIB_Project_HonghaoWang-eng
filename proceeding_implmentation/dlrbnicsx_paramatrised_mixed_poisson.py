@@ -414,8 +414,6 @@ plt.tight_layout()
 plt.savefig("eigenvalues_sigma.png")
 # plt.show()
 
-exit()
-
 # POD Ends ###
 
 sigma_fem_solution_online_mu, u_fem_solution_online_mu = problem_parametric.solve(online_mu)
