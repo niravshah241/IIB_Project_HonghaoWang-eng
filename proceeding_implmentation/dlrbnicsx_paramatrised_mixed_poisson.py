@@ -437,14 +437,13 @@ with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/u_projected.xdmf",
 
 # 5. ANN implementation
 
-def generate_ann_input_set(samples=[6, 6]):
+def generate_ann_input_set(num_samples = 200):
     """Generate an equispaced training set using numpy."""
-    training_set_0 = np.linspace(2. * np.pi, 2.5 * np.pi, samples[0])
-    training_set_1 = np.linspace(12., 13., samples[1])
-    training_set = np.array(list(itertools.product(training_set_0,
-                                                   training_set_1)))
-    training_set = training_set.astype("f")
-    return training_set
+    limits = np.array([[2 * np.pi, 2.5 * np.pi],
+                       [12., 13.]])
+    sampling = LHS(xlimits=limits)
+    para_samples = sampling(num_samples)
+    return para_samples
 
 def generate_ann_output_set(problem, reduced_problem,
                             input_set, mode=None):
@@ -471,7 +470,7 @@ def generate_ann_output_set(problem, reduced_problem,
     return output_set_sigma, output_set_u
 
 # Training dataset
-ann_input_set = generate_ann_input_set()
+ann_input_set = generate_ann_input_set(num_samples = 200)
 np.random.shuffle(ann_input_set)
 ann_output_set_sigma, ann_output_set_u = \
     generate_ann_output_set(problem_parametric, reduced_problem,
@@ -527,9 +526,9 @@ customDataset = CustomDataset(reduced_problem, input_validation_set,
 valid_dataloader_u = DataLoader(customDataset, batch_size=6, shuffle=False) # shuffle=True)
 
 # ANN Model
-model_sigma = HiddenLayersNet(input_training_set.shape[1], [30, 30],
+model_sigma = HiddenLayersNet(input_training_set.shape[1], [15, 15],
                               len(reduced_problem._basis_functions_sigma), Tanh())
-model_u = HiddenLayersNet(input_training_set.shape[1], [15, 15],
+model_u = HiddenLayersNet(input_training_set.shape[1], [25, 25],
                           len(reduced_problem._basis_functions_u), Tanh())
 
 # Start of training (sigma)
@@ -546,7 +545,7 @@ start_epoch_sigma = 0
 checkpoint_path_sigma = "checkpoint_sigma"
 checkpoint_epoch_sigma = 10
 
-learning_rate_sigma = 5.e-6
+learning_rate_sigma = 5.e-4
 optimiser_sigma = get_optimiser(model_sigma, "Adam", learning_rate_sigma)
 loss_func_sigma = get_loss_func("MSE", reduction="sum")
 
@@ -593,7 +592,7 @@ start_epoch_u = 0
 checkpoint_path_u = "checkpoint_u"
 checkpoint_epoch_u = 10
 
-learning_rate_u = 5.e-6
+learning_rate_u = 5.e-4
 optimiser_u = get_optimiser(model_u, "Adam", learning_rate_u)
 loss_func_u = get_loss_func("MSE", reduction="sum")
 
@@ -633,8 +632,8 @@ os.system(f"rm {checkpoint_path_u}")
 print("\n")
 print("Generating error analysis (only input/parameters) dataset for sigma")
 print("\n")
-error_analysis_samples_sigma = [5, 4]
-error_analysis_set_sigma = generate_ann_input_set(samples=error_analysis_samples_sigma)
+error_analysis_samples_sigma = 100
+error_analysis_set_sigma = generate_ann_input_set(num_samples = error_analysis_samples_sigma)
 error_numpy_sigma = np.zeros(error_analysis_set_sigma.shape[0])
 
 for i in range(error_analysis_set_sigma.shape[0]):
@@ -656,8 +655,8 @@ for i in range(error_analysis_set_sigma.shape[0]):
 print("\n")
 print("Generating error analysis (only input/parameters) dataset for u")
 print("\n")
-error_analysis_samples_u = [3, 4]
-error_analysis_set_u = generate_ann_input_set(samples=error_analysis_samples_u)
+error_analysis_samples_u = 100
+error_analysis_set_u = generate_ann_input_set(num_samples = error_analysis_samples_u)
 error_numpy_u = np.zeros(error_analysis_set_u.shape[0])
 
 for i in range(error_analysis_set_u.shape[0]):
