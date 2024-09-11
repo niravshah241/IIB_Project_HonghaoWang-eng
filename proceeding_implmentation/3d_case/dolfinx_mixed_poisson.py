@@ -19,7 +19,7 @@ mesh_comm = MPI.COMM_WORLD
 #    dolfinx.io.gmshio.read_from_msh("mesh_data/3d_mesh.msh", mesh_comm,
 #                                    gmsh_model_rank, gdim=gdim)
 
-mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [20., 1, 1]], [20, 5, 5], dolfinx.mesh.CellType.tetrahedron)
+mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1, 1]], [20, 20, 20], dolfinx.mesh.CellType.tetrahedron)
 
 def z_0(x):
     return np.isclose(x[2], 0)
@@ -136,5 +136,7 @@ with dolfinx.io.XDMFFile(mesh.comm, "out_mixed_poisson/u.xdmf", "w") as sol_file
     sol_file.write_mesh(mesh)
     sol_file.write_function(u_h)
 
-print(f"sigma array: {sigma_h.x.array}, norm: {np.linalg.norm(sigma_h.x.array)}")
-print(f"u_h array: {u_h.x.array}, norm: {np.linalg.norm(u_h.x.array)}")
+sigma_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(sigma_h, sigma_h) * ufl.dx)), op=MPI.SUM)
+u_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(u_h, u_h) * ufl.dx)), op=MPI.SUM)
+
+print(sigma_norm, u_norm)
