@@ -4,6 +4,5 @@ proceeding_implmentation/mesh_data/*.msh
 mixed_poisson/out_mixed_poisson/*.xdmf
 mixed_poisson/out_mixed_poisson/*.h5
 mixed_poisson/out_mixed_poisson/*.msh
-proceeding_implmentation/*/*.xdmf
-proceeding_implmentation/*/*.h5
-proceeding_implmentation/*/*.msh
+proceeding_implmentation/dlrbnicsx_mixed_poisson/online_mu/*.xdmf
+proceeding_implmentation/dlrbnicsx_mixed_poisson/online_mu/*.h5

@@ -648,7 +648,28 @@ for i in range(error_analysis_set_sigma.shape[0]):
                                           input_range=reduced_problem.input_range,
                                           output_range=reduced_problem.output_range_sigma,
                                           index=0, verbose=True)
+
+    fem_solution, _ = problem_parametric.solve(error_analysis_set_sigma[i,:])
+    rb_solution = reduced_problem.reconstruct_solution_sigma(online_nn(reduced_problem,
+                                                                       problem_parametric,
+                                                                       error_analysis_set_sigma[i,:], model_sigma,
+                                                                       len(reduced_problem._basis_functions_sigma),
+                                                                       input_scaling_range=reduced_problem.input_scaling_range,
+                                                                       output_scaling_range=reduced_problem.output_scaling_range_sigma,
+                                                                       input_range=reduced_problem.input_range,
+                                                                       output_range=reduced_problem.output_range_sigma))
+
+    div_sigma_fem = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                            (dolfinx.fem.form(ufl.inner(ufl.div(fem_solution), ufl.div(fem_solution)) * problem_parametric.dx)),
+                            op=MPI.SUM)
+
+    div_sigma_rb = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                            (dolfinx.fem.form(ufl.inner(ufl.div(rb_solution), ufl.div(rb_solution)) * problem_parametric.dx)),
+                            op=MPI.SUM)
+
     print(f"Error: {error_numpy_sigma[i]}")
+    print(div_sigma_fem, div_sigma_rb)
+
 
 # Error analysis dataset
 print("\n")
@@ -671,6 +692,7 @@ for i in range(error_analysis_set_u.shape[0]):
                                       input_range=reduced_problem.input_range,
                                       output_range=reduced_problem.output_range_u,
                                       index=1, verbose=True)
+
     print(f"Error: {error_numpy_u[i]}")
 
 # Online phase at parameter online_mu
@@ -713,52 +735,72 @@ solution_u_projection_error = dolfinx.fem.Function(problem_parametric._U)
 solution_sigma_projection_error.x.array[:] = abs(sigma_fem_solution_online_mu.x.array - sigma_projected_solution_online_mu.x.array)
 solution_u_projection_error.x.array[:] = abs(u_fem_solution_online_mu.x.array - u_projected_solution_online_mu.x.array)
 
-solution_sigma_error = dolfinx.fem.Function(problem_parametric._Q)
-solution_u_error = dolfinx.fem.Function(problem_parametric._U)
+solution_sigma_rb_error = dolfinx.fem.Function(problem_parametric._Q)
+solution_u_rb_error = dolfinx.fem.Function(problem_parametric._U)
 
-solution_sigma_error.x.array[:] = abs(sigma_fem_solution_online_mu.x.array - rb_solution_sigma.x.array)
-solution_u_error.x.array[:] = abs(u_fem_solution_online_mu.x.array - rb_solution_u.x.array)
+solution_sigma_rb_error.x.array[:] = abs(sigma_fem_solution_online_mu.x.array - rb_solution_sigma.x.array)
+solution_u_rb_error.x.array[:] = abs(u_fem_solution_online_mu.x.array - rb_solution_u.x.array)
 
-div_error_sigma_fem = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+div_sigma_fem = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
                           (dolfinx.fem.form(ufl.inner(ufl.div(sigma_fem_solution_online_mu), ufl.div(sigma_fem_solution_online_mu)) * problem_parametric.dx)),
                           op=MPI.SUM)
 
-div_error_sigma_projected = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+div_sigma_projected = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
                           (dolfinx.fem.form(ufl.inner(ufl.div(sigma_projected_solution_online_mu), ufl.div(sigma_projected_solution_online_mu)) * problem_parametric.dx)),
                           op=MPI.SUM)
 
-div_error_sigma_rb = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+div_sigma_rb = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
                           (dolfinx.fem.form(ufl.inner(ufl.div(sigma_projected_solution_online_mu), ufl.div(sigma_projected_solution_online_mu)) * problem_parametric.dx)),
                           op=MPI.SUM)
 
-print(div_error_sigma_fem, div_error_sigma_projected, div_error_sigma_rb)
+print(div_sigma_fem, div_sigma_projected, div_sigma_rb)
 
-with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/sigma_fem_online_mu.xdmf",
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/sigma_fem_online_mu.xdmf",
                         "w") as sigma_solution_file:
     sigma_solution_file.write_mesh(mesh)
     sigma_solution_file.write_function(sigma_fem_solution_online_mu)
 
-with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/u_fem_online_mu.xdmf",
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/u_fem_online_mu.xdmf",
                         "w") as u_solution_file:
     u_solution_file.write_mesh(mesh)
     u_solution_file.write_function(u_fem_solution_online_mu)
 
-with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/sigma_projected_online_mu.xdmf",
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/sigma_projected_online_mu.xdmf",
                         "w") as sigma_solution_file:
     sigma_solution_file.write_mesh(mesh)
     sigma_solution_file.write_function(sigma_projected_solution_online_mu)
 
-with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/u_projected_online_mu.xdmf",
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/u_projected_online_mu.xdmf",
                         "w") as u_solution_file:
     u_solution_file.write_mesh(mesh)
     u_solution_file.write_function(u_projected_solution_online_mu)
 
-with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/sigma_rb_online_mu.xdmf",
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/sigma_rb_online_mu.xdmf",
                         "w") as sigma_solution_file:
     sigma_solution_file.write_mesh(mesh)
     sigma_solution_file.write_function(rb_solution_sigma)
 
-with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/u_rb_online_mu.xdmf",
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/u_rb_online_mu.xdmf",
                         "w") as u_solution_file:
     u_solution_file.write_mesh(mesh)
     u_solution_file.write_function(rb_solution_u)
+
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/solution_sigma_projection_error.xdmf",
+                        "w") as sigma_solution_file:
+    sigma_solution_file.write_mesh(mesh)
+    sigma_solution_file.write_function(solution_sigma_projection_error)
+
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/solution_u_projection_error.xdmf",
+                        "w") as u_solution_file:
+    u_solution_file.write_mesh(mesh)
+    u_solution_file.write_function(solution_u_projection_error)
+
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/solution_sigma_rb_error.xdmf",
+                        "w") as sigma_solution_file:
+    sigma_solution_file.write_mesh(mesh)
+    sigma_solution_file.write_function(solution_sigma_rb_error)
+
+with dolfinx.io.XDMFFile(mesh.comm, "dlrbnicsx_mixed_poisson/online_mu/solution_u_rb_error.xdmf",
+                        "w") as u_solution_file:
+    u_solution_file.write_mesh(mesh)
+    u_solution_file.write_function(solution_u_rb_error)
