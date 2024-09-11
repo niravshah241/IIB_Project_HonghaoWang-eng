@@ -123,7 +123,7 @@ dolfinx.fem.petsc.set_bc(L, bcs)
 ksp = PETSc.KSP()
 ksp.create(mesh.comm)
 ksp.setOperators(A)
-ksp.setType("gmres") # NOTE for fgmres "fgmres" in the place of "gmres"
+ksp.setType("gmres") # NOTE if fgmres, use "fgmres" in the place of "gmres"
 ksp.setGMRESRestart(100)
 pc = ksp.getPC()
 pc.setType("ilu")
