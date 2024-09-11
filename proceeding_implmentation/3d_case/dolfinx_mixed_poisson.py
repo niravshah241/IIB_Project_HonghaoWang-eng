@@ -136,7 +136,14 @@ with dolfinx.io.XDMFFile(mesh.comm, "out_mixed_poisson/u.xdmf", "w") as sol_file
     sol_file.write_mesh(mesh)
     sol_file.write_function(u_h)
 
-sigma_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(sigma_h, sigma_h) * ufl.dx)), op=MPI.SUM)
-u_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(u_h, u_h) * ufl.dx)), op=MPI.SUM)
+sigma_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                                 (dolfinx.fem.form(ufl.inner(sigma_h, sigma_h) *
+                                                   ufl.dx +
+                                                   ufl.inner(ufl.div(sigma_h),
+                                                             ufl.div(sigma_h)) *
+                                                             ufl.dx)), op=MPI.SUM)
+u_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                             (dolfinx.fem.form(ufl.inner(u_h, u_h) *
+                                               ufl.dx)), op=MPI.SUM)
 
-print(sigma_norm, u_norm)
+print(f"sigma norm: {sigma_norm}, u norm: {u_norm}")
