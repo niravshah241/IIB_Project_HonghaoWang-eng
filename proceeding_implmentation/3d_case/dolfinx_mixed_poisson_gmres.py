@@ -13,15 +13,8 @@ gdim = 3
 gmsh_model_rank = 0
 mesh_comm = MPI.COMM_WORLD
 
-<<<<<<< HEAD
 nx, ny, nz = 20, 20, 20
 mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1, 1]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
-=======
-mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD,
-                               [[0.0, 0.0, 0.0], [1., 1, 1]],
-                               [15, 15, 15],
-                               dolfinx.mesh.CellType.tetrahedron)
->>>>>>> ba359d9081b3786c5d0d5cf45fc9e3c304ef7666
 
 # ### Mark boundaries ###
 # Identify entities with dimension boundary_dim
