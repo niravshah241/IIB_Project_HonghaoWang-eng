@@ -7,6 +7,7 @@ import numpy as np
 import basix
 import ufl
 import dolfinx
+from dolfinx.fem.petsc import assemble_matrix, assemble_vector, apply_lifting, set_bc
 
 # ### Import mesh in dolfinx ###
 gdim = 3
@@ -14,7 +15,7 @@ gmsh_model_rank = 0
 mesh_comm = MPI.COMM_WORLD
 
 nx, ny, nz = 20, 20, 20
-mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1, 1]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
+mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1., 1.]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
 
 # ### Mark boundaries ###
 # Identify entities with dimension boundary_dim
@@ -131,10 +132,10 @@ bcs = [bc_x0, bc_y0, bc_z0]
 # Assemble the system matrices and the vectors
 a_cpp = dolfinx.fem.form(a)
 l_cpp = dolfinx.fem.form(L)
-A = dolfinx.fem.petsc.assemble_matrix(a_cpp, bcs=bcs)
+A = assemble_matrix(a_cpp, bcs=bcs) # dolfinx.fem.petsc.assemble_matrix(a_cpp, bcs=bcs)
 A.assemble()
-L = dolfinx.fem.petsc.assemble_vector(l_cpp)
-dolfinx.fem.petsc.apply_lifting(L, [a_cpp], [bcs])
+L = assemble_vector(l_cpp) # dolfinx.fem.petsc.assemble_vector(l_cpp)
+apply_lifting(L, [a_cpp], [bcs]) # dolfinx.fem.petsc.apply_lifting(L, [a_cpp], [bcs])
 L.ghostUpdate(addv=PETSc.InsertMode.ADD,
               mode=PETSc.ScatterMode.REVERSE)
 dolfinx.fem.petsc.set_bc(L, bcs)

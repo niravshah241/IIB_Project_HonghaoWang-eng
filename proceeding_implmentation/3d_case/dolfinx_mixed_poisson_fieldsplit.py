@@ -17,7 +17,7 @@ gmsh_model_rank = 0
 mesh_comm = MPI.COMM_WORLD
 
 nx, ny, nz = 20, 20, 20
-mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1, 1]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
+mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1., 1.]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
 
 def z_0(x):
     return np.isclose(x[2], 0)
@@ -63,6 +63,25 @@ V0 = V.sub(0)
 Q, VQ_map = V0.collapse()
 V1 = V.sub(1)
 W, VW_map = V1.collapse()
+
+'''
+# Create local map
+local_range = Q.dofmap.index_map.local_range
+num_dofs_local = Q.dofmap.index_map.size_local
+local_dof_map = np.arange(num_dofs_local, dtype=np.int64)
+local_dof_map += local_range[0]
+local_dof_map = local_dof_map.astype("int32")
+print(local_dof_map)
+
+local_range_w = W.dofmap.index_map.local_range
+num_dofs_local_w = W.dofmap.index_map.size_local
+local_dof_map_w = np.arange(num_dofs_local_w, dtype=np.int64)
+# local_dof_map_w += local_range_w[0]
+local_dof_map_w = local_dof_map_w.astype("int32")
+print(local_dof_map_w)
+
+# exit()
+'''
 
 dofs_x0 = dolfinx.fem.locate_dofs_topological((V0, Q), gdim-1, boundaries.find(30))
 
@@ -131,8 +150,8 @@ pc.setFieldSplitSchurPreType(3)
 # NOTE Since setFieldSplitIS for ISq is called zero-th and for ISw is called first --> subksps[0] corressponds to ISq and subksps[1] corressponds to ISw
 ISq = PETSc.IS().createGeneral(VQ_map, mesh.comm)
 ISw = PETSc.IS().createGeneral(VW_map, mesh.comm)
-pc.setFieldSplitIS(("sigma",ISq))
-pc.setFieldSplitIS(("u",ISw))
+pc.setFieldSplitIS(("sigma", ISq))
+pc.setFieldSplitIS(("u", ISw))
 pc.setUp()
 
 subksps = pc.getFieldSplitSubKSP()
@@ -152,6 +171,8 @@ ksp.solve(L, w_h.vector)
 print(f"Number of iterations: {ksp.getIterationNumber()}")
 print(f"Convergence reason: {ksp.getConvergedReason()}")
 # print(f"Convergence history: {ksp.getConvergenceHistory()}")
+A.destroy()
+L.destroy()
 ksp.destroy()
 w_h.x.scatter_forward()
 sigma_h, u_h = w_h.split()
@@ -166,8 +187,17 @@ with dolfinx.io.XDMFFile(mesh.comm, "out_mixed_poisson/u.xdmf", "w") as sol_file
     sol_file.write_mesh(mesh)
     sol_file.write_function(u_h)
 
-print(f"sigma array: {sigma_h.x.array}, norm: {np.linalg.norm(sigma_h.x.array)}")
-print(f"u_h array: {u_h.x.array}, norm: {np.linalg.norm(u_h.x.array)}")
+sigma_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                                 (dolfinx.fem.form(ufl.inner(sigma_h, sigma_h) *
+                                                   ufl.dx +
+                                                   ufl.inner(ufl.div(sigma_h),
+                                                             ufl.div(sigma_h)) *
+                                                             ufl.dx)), op=MPI.SUM)
+u_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
+                             (dolfinx.fem.form(ufl.inner(u_h, u_h) *
+                                               ufl.dx)), op=MPI.SUM)
+
+print(f"sigma norm: {sigma_norm}, u norm: {u_norm}")
 
 # NOTE references
 # https://petsc.org/release/petsc4py/reference/petsc4py.PETSc.PC.FieldSplitSchurPreType.html#petsc4py.PETSc.PC.FieldSplitSchurPreType.SELFP
