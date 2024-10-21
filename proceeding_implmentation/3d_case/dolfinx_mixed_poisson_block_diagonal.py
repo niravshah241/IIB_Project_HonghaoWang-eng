@@ -10,13 +10,15 @@ import ufl
 import dolfinx
 from dolfinx.fem.petsc import LinearProblem
 
+import time
+
 # Import mesh in dolfinx
 # Boundary markers: x=1 is 22, x=0 is 30, y=1 is 26, y=0 is 18, z=1 is 31, z=0 is 1
 gdim = 3
 gmsh_model_rank = 0
 mesh_comm = MPI.COMM_WORLD
 
-nx, ny, nz = 20, 20, 20
+nx, ny, nz = 40, 40, 40
 mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1, 1]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
 
 def z_0(x):
@@ -110,7 +112,7 @@ l_cpp = dolfinx.fem.form(L)
 aP_cpp = dolfinx.fem.form(aP)
 A = dolfinx.fem.petsc.assemble_matrix(a_cpp, bcs=bcs)
 A.assemble()
-P = dolfinx.fem.petsc.assemble_matrix(aP_cpp)
+P = dolfinx.fem.petsc.assemble_matrix(aP_cpp, bcs=bcs)
 P.assemble()
 L = dolfinx.fem.petsc.assemble_vector(l_cpp)
 dolfinx.fem.petsc.apply_lifting(L, [a_cpp], [bcs])
@@ -126,11 +128,8 @@ pc = ksp.getPC()
 pc.setType("fieldsplit")
 # NOTE see https://petsc.org/release/petsc4py/reference/petsc4py.PETSc.PC.CompositeType.html
 pc.setFieldSplitType(PETSc.PC.CompositeType.ADDITIVE)
-# CAUTION it is "assumed" that 1 means full see https://petsc.org/release/petsc4py/reference/petsc4py.PETSc.PC.FieldSplitSchurFactType.html #petsc4py.PETSc.PC.FieldSplitSchurFactType
-pc.setFieldSplitSchurFactType(1) # TODO
-# CAUTION it is "assumed" that 3 means selfp see https://web.cels.anl.gov/projects/petsc/vault/petsc-3.20/docs/petsc4py/reference/petsc4py.PETSc.PC.FieldSplitSchurPreType.html
-pc.setFieldSplitSchurPreType(3) # TODO
-# ksp.getPC().setFactorSolverType("mumps")
+
+ksp.getPC().setFactorSolverType("superlu")
 
 # NOTE Since setFieldSplitIS for ISq is called zero-th and for ISw is called first --> subksps[0] corressponds to ISq and subksps[1] corressponds to ISw
 ISq = PETSc.IS().createGeneral(VQ_map, mesh.comm)
@@ -152,7 +151,9 @@ ksp.rtol = 1.e-8 # NOTE or ksp.setTolerances(1e-8) # rtol is first argument of s
 # ksp.setConvergenceHistory()
 ksp.setFromOptions()
 w_h = dolfinx.fem.Function(V)
+solve_start_time = time.process_time()
 ksp.solve(L, w_h.vector)
+solve_end_time = time.process_time()
 print(f"Number of iterations: {ksp.getIterationNumber()}")
 print(f"Convergence reason: {ksp.getConvergedReason()}")
 # print(f"Convergence history: {ksp.getConvergenceHistory()}")
@@ -184,6 +185,7 @@ u_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
                                                ufl.dx)), op=MPI.SUM)
 
 print(f"sigma norm: {sigma_norm}, u norm: {u_norm}")
+print(f"Solve time: {solve_end_time - solve_start_time}")
 
 # NOTE references
 # https://petsc.org/release/petsc4py/reference/petsc4py.PETSc.PC.FieldSplitSchurPreType.html#petsc4py.PETSc.PC.FieldSplitSchurPreType.SELFP

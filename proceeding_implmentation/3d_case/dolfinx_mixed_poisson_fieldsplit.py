@@ -64,32 +64,12 @@ Q, VQ_map = V0.collapse()
 V1 = V.sub(1)
 W, VW_map = V1.collapse()
 
-'''
-# Create local map
-local_range = Q.dofmap.index_map.local_range
-num_dofs_local = Q.dofmap.index_map.size_local
-local_dof_map = np.arange(num_dofs_local, dtype=np.int64)
-local_dof_map += local_range[0]
-local_dof_map = local_dof_map.astype("int32")
-print(local_dof_map)
-
-local_range_w = W.dofmap.index_map.local_range
-num_dofs_local_w = W.dofmap.index_map.size_local
-local_dof_map_w = np.arange(num_dofs_local_w, dtype=np.int64)
-# local_dof_map_w += local_range_w[0]
-local_dof_map_w = local_dof_map_w.astype("int32")
-print(local_dof_map_w)
-
-# exit()
-'''
-
 dofs_x0 = dolfinx.fem.locate_dofs_topological((V0, Q), gdim-1, boundaries.find(30))
 
 def f1(x):
     values = np.zeros((3, x.shape[1]))
     values[0, :] = np.sin(mu[4] * x[0])
     return values
-
 
 f_h1 = dolfinx.fem.Function(Q)
 f_h1.interpolate(f1)
@@ -102,7 +82,6 @@ def f2(x):
     values[1, :] = np.sin(mu[4] * x[1])
     return values
 
-
 f_h2 = dolfinx.fem.Function(Q)
 f_h2.interpolate(f2)
 bc_y0 = dolfinx.fem.dirichletbc(f_h2, dofs_y0, V0)
@@ -113,7 +92,6 @@ def f3(x):
     values = np.zeros((3, x.shape[1]))
     values[2, :] = np.sin(mu[4] * x[2])
     return values
-
 
 f_h3 = dolfinx.fem.Function(Q)
 f_h3.interpolate(f3)
@@ -150,8 +128,23 @@ pc.setFieldSplitSchurPreType(3)
 # NOTE Since setFieldSplitIS for ISq is called zero-th and for ISw is called first --> subksps[0] corressponds to ISq and subksps[1] corressponds to ISw
 ISq = PETSc.IS().createGeneral(VQ_map, mesh.comm)
 ISw = PETSc.IS().createGeneral(VW_map, mesh.comm)
-pc.setFieldSplitIS(("sigma", ISq))
-pc.setFieldSplitIS(("u", ISw))
+pc.setFieldSplitIS(("sigma", ISq), ("u", ISw))
+
+
+'''
+Q_map = Q.dofmap.index_map
+W_map = W.dofmap.index_map
+offset_q = Q_map.local_range[0] * Q.dofmap.index_map_bs + W_map.local_range[0]
+offset_w = Q_map.local_range[0] * Q.dofmap.index_map_bs + offset_q
+is_q = PETSc.IS().createStride(Q_map.size_local * Q.dofmap.index_map_bs, offset_q, 1, comm=PETSc.COMM_SELF)
+is_w = PETSc.IS().createStride(W_map.size_local, offset_w, 1, comm=PETSc.COMM_SELF)
+
+print(offset_q, Q_map.local_range, Q.dofmap.index_map.size_local, Q.dofmap.index_map_bs, W_map.local_range)
+print(offset_w, W_map.local_range, W.dofmap.index_map_bs, Q_map.local_range)
+print(is_q, is_q, is_w, is_w)
+ksp.getPC().setFieldSplitIS(("sigma", is_q), ("u", is_w))
+'''
+
 pc.setUp()
 
 subksps = pc.getFieldSplitSubKSP()
@@ -198,6 +191,12 @@ u_norm = mesh.comm.allreduce(dolfinx.fem.assemble_scalar
                                                ufl.dx)), op=MPI.SUM)
 
 print(f"sigma norm: {sigma_norm}, u norm: {u_norm}")
+
+'''
+print(sigma_h.x.array)
+print(u_h.x.array)
+print(w_h.x.array)
+'''
 
 # NOTE references
 # https://petsc.org/release/petsc4py/reference/petsc4py.PETSc.PC.FieldSplitSchurPreType.html#petsc4py.PETSc.PC.FieldSplitSchurPreType.SELFP
