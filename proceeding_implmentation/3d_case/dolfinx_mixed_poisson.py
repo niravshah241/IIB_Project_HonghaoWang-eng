@@ -19,7 +19,8 @@ mesh_comm = MPI.COMM_WORLD
 #    dolfinx.io.gmshio.read_from_msh("mesh_data/3d_mesh.msh", mesh_comm,
 #                                    gmsh_model_rank, gdim=gdim)
 
-mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [20., 1, 1]], [20, 5, 5], dolfinx.mesh.CellType.tetrahedron)
+nx, ny, nz = 20, 20, 20
+mesh = dolfinx.mesh.create_box(MPI.COMM_WORLD, [[0.0, 0.0, 0.0], [1., 1, 1]], [nx, ny, nz], dolfinx.mesh.CellType.tetrahedron)
 
 def z_0(x):
     return np.isclose(x[2], 0)
